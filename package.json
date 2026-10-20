@@ -1,0 +1,13 @@
+{
+  "name": "meetpoint-demo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MeetPoint 多人出行集合点推荐系统 — SRS V1.1 本地交互 Demo",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node --test tests/core.test.js",
+    "check": "node --check core.js && node --check app.js && node --check server.js"
+  },
+  "engines": { "node": ">=18" }
+}
