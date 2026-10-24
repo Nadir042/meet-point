@@ -16,8 +16,12 @@ test('create, join, complete requirements and open a 24-hour round', () => {
   a = M.act(a, a.hostId, 'recommend', {}, NOW);
   assert.equal(a.status, 'voting');
   assert.equal(a.deadline, NOW + M.DAY);
-  assert.equal(a.candidates.length, 3);
-  assert.equal(new Set(a.candidates.map(p => p.id)).size, 3);
+  assert.ok(a.candidates.length >= 3 && a.candidates.length <= 9);
+  assert.equal(new Set(a.candidates.map(p => p.id)).size, a.candidates.length);
+  for (const group of M.GROUPS) {
+    assert.equal(a.groups[group.id].length, 3);
+    assert.equal(new Set(a.groups[group.id]).size, 3);
+  }
   for (const p of a.candidates) {
     assert.ok(p.score >= 0 && p.score <= 10);
     assert.equal(p.routes.length, 2);
@@ -89,6 +93,7 @@ test('deadline automatically counts votes; no final change is allowed', () => {
 });
 test('zero votes at deadline produces no result; revote starts a fresh 24 hours', () => {
   let a = prepared();
+  a = M.act(a, a.hostId, 'identity-type', { identityType: 'account' }, NOW);
   a = M.act(a, a.hostId, 'recommend', {}, NOW);
   a = M.tick(a, NOW + M.DAY);
   assert.equal(a.status, 'no-votes');
@@ -110,7 +115,9 @@ test('requirements never mutate a voting snapshot; approved refresh clears all o
   a = M.act(a, a.hostId, 'recommend', {}, NOW + 5000);
   assert.equal(a.round, 2);
   assert.deepEqual(a.votes, {});
-  assert.deepEqual(a.requests, []);
+  assert.equal(a.requests[0].status, 'approved');
+  assert.equal(a.requests[0].round, 1);
+  assert.equal(a.requests[0].handledAt, NOW + 5000);
   assert.notEqual(JSON.stringify(a.candidates), original);
 });
 test('transfer preserves membership and votes and immediately changes management rights', () => {
@@ -142,4 +149,105 @@ test('activity types filter available candidates', () => {
   a = prepared(); a.type = '线下会面';
   a = M.act(a, a.hostId, 'recommend', {}, NOW);
   assert.ok(a.candidates.every(p => p.tags.includes('线下会面')));
+});
+
+test('three groups have distinct priority order and share a single vote pool', () => {
+  const a = seeded(), byId = id => a.candidates.find(p => p.id === id);
+  for (const [id, dimension] of [['fairness', 'fairness'], ['preference', 'preference'], ['convenience', 'transit']]) {
+    const scores = a.groups[id].map(pid => byId(pid).dimensions[dimension]);
+    assert.deepEqual(scores, [...scores].sort((x, y) => y - x));
+  }
+  const shared = a.groups.fairness.find(id => a.groups.preference.includes(id));
+  assert.ok(shared);
+  const voted = M.act(a, a.hostId, 'vote', { id: shared }, NOW);
+  assert.equal(Object.keys(voted.votes).length, 3);
+  assert.ok(M.tally(voted)[shared] >= 1);
+  assert.equal(voted.candidates.filter(p => p.id === shared).length, 1);
+});
+test('request rejection requires a reason, stays public and does not change round or votes', () => {
+  let a = seeded();
+  a = M.act(a, a.members[1].id, 'request', { reason: '出发地变了' }, NOW);
+  const requestId = a.requests[0].id, oldVotes = { ...a.votes };
+  assert.throws(() => M.act(a, a.hostId, 'reject-request', { id: requestId, reason: ' ' }, NOW), /拒绝原因/);
+  assert.throws(() => M.act(a, a.members[1].id, 'reject-request', { id: requestId, reason: '不需要' }, NOW), /发起者/);
+  a = M.act(a, a.hostId, 'reject-request', { id: requestId, reason: '大家已确认当前安排' }, NOW);
+  assert.equal(a.requests[0].status, 'rejected');
+  assert.equal(a.requests[0].response, '大家已确认当前安排');
+  assert.equal(a.round, 1);
+  assert.deepEqual(a.votes, oldVotes);
+  a = M.act(a, a.members[1].id, 'request', { reason: '新需求' }, NOW);
+  assert.equal(a.requests.length, 2);
+  assert.throws(() => M.act(a, a.members[1].id, 'request', {}, NOW), /待处理/);
+});
+test('guest and account recovery use individual last valid operation, not shared activity time', () => {
+  let a = prepared();
+  const host = a.hostId, other = a.members[1].id;
+  a = M.act(a, other, 'identity-type', { identityType: 'account' }, NOW);
+  a = M.act(a, other, 'requirements', { originIndex: 3, mode: '步行', preference: '不限', budget: 100, shared: false }, NOW + M.DAY * 2);
+  assert.equal(M.access(a, host, NOW + M.DAY).allowed, false);
+  assert.equal(M.access(a, other, NOW + M.DAY * 8).allowed, true);
+  assert.equal(M.access(a, other, NOW + M.DAY * 9).allowed, false);
+  assert.throws(() => M.act(a, host, 'identity-type', { identityType: 'account' }, NOW + M.DAY * 2), /恢复期限/);
+  assert.equal(a.members.length, 2, 'expired membership must not erase shared records');
+});
+test('a valid operation renews only its member; reads and automatic counting do not renew', () => {
+  let a = prepared();
+  const start = M.access(a, a.hostId, NOW).expiresAt;
+  a = M.act(a, a.hostId, 'schedule', { date: '2026-10-25', time: '17:00' }, NOW + 1000);
+  assert.equal(M.access(a, a.hostId, NOW).expiresAt, start + 1000);
+  assert.equal(M.access(a, a.members[1].id, NOW).expiresAt, start);
+  a = M.act(a, a.hostId, 'recommend', {}, NOW + 1000);
+  const last = a.members[0].lastActiveAt;
+  a = M.tick(a, NOW + M.DAY + 1000);
+  assert.equal(a.members[0].lastActiveAt, last);
+  assert.equal(a.status, 'no-votes');
+});
+test('dates are valid and schedule remains independent of the 24-hour vote deadline', () => {
+  assert.equal(M.validDate('2026-02-30'), false);
+  assert.equal(M.validDate('2028-02-29'), true);
+  assert.equal(M.dateKey(Date.parse('2026-10-23T18:00:00Z')), '2026-10-24');
+  let a = seeded(), deadline = a.deadline;
+  a = M.act(a, a.hostId, 'schedule', { date: '2026-12-31', time: '23:00' }, NOW);
+  assert.equal(a.date, '2026-12-31');
+  assert.equal(a.deadline, deadline);
+  assert.throws(() => M.act(a, a.hostId, 'schedule', { date: '2026-02-30', time: '23:00' }, NOW), /日期/);
+});
+test('completed memories accept per-member feelings and comments without altering confirmed results', () => {
+  let a = M.seedMemories(NOW)[0], result = a.resultId, host = a.hostId, other = a.members[1].id;
+  a = M.act(a, host, 'feeling', { text: '我的新感受' }, NOW + 8 * M.DAY);
+  a = M.act(a, other, 'feeling', { text: '另一位伙伴的感受' }, NOW + 8 * M.DAY);
+  assert.equal(a.journal.feelings.length, 2);
+  assert.equal(a.journal.feelings.find(f => f.memberId === host).text, '我的新感受');
+  a = M.act(a, host, 'comment', { text: '<script>文本不会作为 HTML 使用</script>' }, NOW);
+  const comment = a.journal.comments.at(-1);
+  assert.throws(() => M.act(a, other, 'delete-comment', { id: comment.id }, NOW), /自己/);
+  a = M.act(a, host, 'delete-comment', { id: comment.id }, NOW);
+  assert.equal(a.journal.comments.some(c => c.id === comment.id), false);
+  assert.equal(a.resultId, result);
+  assert.equal(a.status, 'completed');
+  assert.throws(() => M.act(a, host, 'vote', { id: a.candidates[1].id }, NOW), /结束/);
+  assert.throws(() => M.act(a, 'outsider', 'comment', { text: '越权' }, NOW), /身份/);
+});
+test('photo metadata is limited and only the author can remove a photo', () => {
+  let a = M.seedMemories(NOW)[0], host = a.hostId;
+  a = M.act(a, host, 'photos', { photos: Array.from({ length: 12 }, (_, i) => ({ id: `photo-${i}`, name: `${i}.jpg` })) }, NOW);
+  assert.equal(a.journal.photos.length, 12);
+  assert.throws(() => M.act(a, host, 'photos', { photos: [{ id: 'overflow' }] }, NOW), /12/);
+  assert.throws(() => M.act(a, a.members[1].id, 'delete-photo', { id: 'photo-0' }, NOW), /自己/);
+  a = M.act(a, host, 'delete-photo', { id: 'photo-0' }, NOW);
+  assert.equal(a.journal.photos.length, 11);
+  assert.throws(() => M.act(a, host, 'photos', { photos: [{ id: 'photo-1' }] }, NOW), /无效/);
+});
+test('legacy migration preserves candidates, votes and old requests while adding journal fields', () => {
+  const a = seeded();
+  delete a.date; delete a.journal; delete a.groups;
+  a.requests = [a.members[1].id];
+  a.members.forEach(m => { delete m.identityType; delete m.lastActiveAt; });
+  const migrated = M.migrate(a);
+  assert.deepEqual(migrated.votes, a.votes);
+  assert.deepEqual(migrated.candidates, a.candidates);
+  assert.equal(migrated.requests[0].status, 'pending');
+  assert.equal(migrated.members[0].lastActiveAt, a.updatedAt);
+  assert.ok(M.validDate(migrated.date));
+  assert.deepEqual(migrated.journal.photos, []);
 });

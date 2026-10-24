@@ -3,7 +3,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
-const allowed = new Set(['index.html', 'styles.css', 'core.js', 'app.js']);
+const allowed = new Set(['index.html', 'styles.css', 'journal.css', 'core.js', 'app.js', 'journal.js', 'media.js', 'assets/autumn.svg', 'assets/cafe.svg', 'assets/lake.svg']);
 const server = http.createServer((req, res) => {
   let name;
   try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).slice(1) || 'index.html'; }
