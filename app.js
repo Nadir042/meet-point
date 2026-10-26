@@ -46,6 +46,9 @@
   let view = 'calendar';
   let group = 'fairness';
   let selectedPoi = null;
+  let poiContext = null;
+  let poiTrigger = null;
+  let menuOpen = false;
   let focusBeforeModal = null;
   let toastTimer;
   let lastAccessState = null;
@@ -86,7 +89,7 @@
     try {
       replace(M.act(active(), viewer(), action, data));
       if (!active().members.some(m => m.id === viewer())) state.identities[active().id] = active().hostId;
-      save(); render(); toast(message); return true;
+      save(); if (action === 'vote' && view === 'recommend' && canAccess()) refreshVoteUI(); else render(); toast(message); return true;
     } catch (error) { toast(error.message); return false; }
   }
   function avatar(m, index, small = false) {
@@ -106,20 +109,15 @@
     }
     return `<svg viewBox="0 0 310 146" role="img" aria-label="${esc(name)}建筑示意插画"><circle cx="242" cy="32" r="19" fill="#f5df9b"/><path d="M0 122Q73 108 155 122t155 0v24H0Z" fill="#cbd3b8"/>${trees}${building}<path d="M0 136h310" stroke="#f9f5e8" stroke-width="3"/><g fill="#748369"><circle cx="51" cy="123" r="7"/><circle cx="243" cy="124" r="10"/></g></svg>`;
   }
-  function sidebar() {
-    const navs = [['calendar', 'grid', '相聚日历'], ['overview', 'people', '我的活动'], ['recommend', 'compass', '集合点推荐'], ['members', 'people', '成员与需求'], ['feedback', 'chat', '意见反馈']];
-    return `<aside class="sidebar">
-      <a class="brand" href="#" data-action="view" data-value="calendar"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint<small>让相聚，刚刚好。</small></span></a>
-      <div class="workspace-label">相聚档案 <span>OUR JOURNAL</span></div>
-      <nav aria-label="主导航">${navs.map(([id, glyph, label]) => `<button class="nav-item ${view === id ? 'active' : ''}" data-action="view" data-value="${id}">${icon(glyph)}<span>${label}</span>${id === 'recommend' ? '<span class="nav-dot"></span>' : ''}</button>`).join('')}</nav>
-      <div class="sidebar-note"><span class="note-art">${icon('leaf')}</span><strong>见面是生活的<br>小小纪念日</strong><p>收集一起度过的日子，<br>也收集那些平凡的快乐。</p><span class="note-line"></span></div>
-      <div class="sidebar-bottom"><span class="demo-pill">VOL. 02 · DEMO</span><p>neXus · 写给每一次相聚</p><button class="text-button muted" data-action="about">${icon('compass')} 关于这本手账</button></div>
-    </aside>`;
-  }
   function header() {
     const a = active();
-    return `<header class="topbar"><div class="breadcrumb">MeetPoint 手账 ${icon('chevron')} <strong>${{ calendar: '相聚日历', overview: '我的活动', recommend: '集合点推荐', members: '成员与需求', feedback: '意见反馈' }[view]}</strong></div>
-      <div class="topbar-right"><button class="text-button identity-kind" data-action="identity-info">${self()?.identityType === 'account' ? '演示账号 · 7天' : '游客 · 24小时'}</button><div class="identity">${avatar(self() || { name: '访客' }, Math.max(0, a.members.findIndex(m => m.id === viewer())), true)}<label class="sr-only" for="identity">切换演示成员</label><select id="identity" aria-label="切换演示成员">${a.members.map(m => `<option value="${m.id}" ${m.id === viewer() ? 'selected' : ''}>${esc(m.name)}${m.id === a.hostId ? ' · 发起者' : ' · 成员'}</option>`).join('')}</select></div></div></header>`;
+    const navs = [['calendar', '相聚日历'], ['overview', '我的活动'], ['recommend', '集合点推荐'], ['members', '成员与需求'], ['feedback', '意见反馈']];
+    return `<header class="site-header">
+      <a class="site-brand" href="#" data-action="view" data-value="calendar" aria-label="MeetPoint 相聚日历"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint</span></a>
+      <nav id="primary-nav" class="primary-nav ${menuOpen ? 'is-open' : ''}" aria-label="主导航">${navs.map(([id, label]) => `<button class="top-nav-item ${view === id ? 'active' : ''}" ${view === id ? 'aria-current="page"' : ''} data-action="view" data-value="${id}">${label}</button>`).join('')}</nav>
+      <div class="header-account"><button class="text-button identity-kind" data-action="identity-info">${self()?.identityType === 'account' ? '演示账号 · 7天' : '游客 · 24小时'}</button><div class="identity">${avatar(self() || { name: '访客' }, Math.max(0, a.members.findIndex(m => m.id === viewer())), true)}<label class="sr-only" for="identity">切换演示成员</label><select id="identity">${a.members.map(m => `<option value="${m.id}" ${m.id === viewer() ? 'selected' : ''}>${esc(m.name)}${m.id === a.hostId ? ' · 发起者' : ' · 成员'}</option>`).join('')}</select></div></div>
+      <button class="menu-toggle button light" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav">菜单</button>
+    </header>`;
   }
   function activityHeader() {
     const a = active();
@@ -131,12 +129,18 @@
       ${a.paused ? '<div class="notice">活动已暂停。选票与候选已保留，倒计时将在恢复后继续。</div>' : ''}
       ${a.status === 'cancelled' ? '<div class="notice">这场活动已取消。你仍可查看记录，或创建一场新的相聚。</div>' : ''}`;
   }
+  function mapPoints() {
+    const a = active();
+    const ids = [...(a.groups[group] || [])];
+    if (a.resultId && !ids.includes(a.resultId)) ids.push(a.resultId);
+    return ids.map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
+  }
   function mapPanel() {
     const a = active();
     const visible = M.visibleMembers(a, viewer()).filter(m => m.origin);
-    const points = (a.groups[group] || []).map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
+    const points = mapPoints();
     return `<section class="panel map-panel"><div class="panel-heading"><h3>${icon('pin')} 相聚地图</h3><span class="tiny-label">上海 · 地点分布示意</span></div>
-      <div class="map-canvas">
+      <div class="map-stage"><div class="map-canvas" aria-label="候选集合点示意地图">
         <svg class="map-base" viewBox="0 0 800 300" preserveAspectRatio="none" aria-hidden="true">
           <defs><pattern id="blocks" width="100" height="76" patternUnits="userSpaceOnUse" patternTransform="rotate(-13)"><rect width="100" height="76" fill="#f0efe6"/><rect x="8" y="8" width="80" height="56" rx="7" fill="#e5e5db"/><path d="M0 0h100M0 0v76" stroke="#fffef9" stroke-width="8"/></pattern></defs>
           <rect width="800" height="300" fill="url(#blocks)"/>
@@ -152,10 +156,10 @@
           const y = Math.max(12, Math.min(86, 95 - (m.origin.lat - 31.19) / .07 * 85));
           return `<div class="origin-marker" style="left:${x}%;top:${y}%">${avatar(m, a.members.findIndex(p => p.id === m.id), true)}<span>${esc(m.name)}${m.id === viewer() ? '（我）' : ''}</span></div>`;
         }).join('')}
-        ${points.map((p, i) => `<button class="poi-marker ${selectedPoi === p.id ? 'selected' : ''}" style="left:${p.x}%;top:${p.y}%" data-action="select-poi" data-value="${p.id}" aria-label="查看候选 ${i + 1} ${esc(p.name)}"><span>${i + 1}</span><strong>${esc(p.name)}</strong></button>`).join('')}
+        ${points.map((p, i) => `<button id="marker-${p.id}" class="poi-marker ${selectedPoi === p.id ? 'selected' : ''} ${a.resultId === p.id ? 'is-result' : ''}" style="left:${p.x}%;top:${p.y}%" data-action="select-poi" data-value="${p.id}" aria-expanded="${selectedPoi === p.id}" aria-controls="poi-popup" aria-label="${a.resultId === p.id ? '最终集合点' : `查看候选 ${i + 1}`} ${esc(p.name)}"><span>${a.resultId === p.id ? '✓' : i + 1}</span><strong>${esc(p.name)}${a.resultId === p.id ? ' · 最终地点' : ''}</strong></button>`).join('')}
         <div class="map-caption"><span><i class="legend-dot"></i> 候选集合点</span><span><i class="legend-dot origin"></i> 已公开 / 本人出发地</span></div>
         <span class="map-compass">N ↑</span>
-      </div><div class="map-footer">${icon('lock')} 隐藏的出发地不会在其他成员视角中展示。<span>示意图 · 非真实地图</span></div></section>`;
+      </div><div id="poi-popup-host">${renderPoiPopup()}</div></div><div class="map-footer">${icon('lock')} 隐藏的出发地不会在其他成员视角中展示。<span>示意图 · 非真实地图</span></div></section>`;
   }
   function candidateCard(p, i) {
     const a = active();
@@ -164,13 +168,78 @@
     const mine = p.routes.find(r => r.memberId === viewer());
     const winner = a.resultId === p.id;
     return `<article id="candidate-${p.id}" class="candidate ${selectedPoi === p.id ? 'focused' : ''} ${vote === p.id ? 'voted' : ''}">
-      <div class="candidate-art art-${p.illustration}">${art(p.illustration, p.name)}<span class="rank ${i === 0 ? 'first' : ''}">${M.GROUPS.find(g => g.id === group).name} · ${i + 1}</span><span class="art-note">示意插画</span></div>
-      <div class="candidate-body"><div class="candidate-title"><h3>${esc(p.name)}</h3><div class="score">${p.score.toFixed(1)}<small>/ 10</small></div></div><p class="address">${icon('pin')}${esc(p.area)}</p><p class="poi-description">${esc(p.subtitle)}</p>
+      <div class="poi-card-top"><span class="poi-rank">${i >= 0 ? `${M.GROUPS.find(g => g.id === group).name} · 第 ${i + 1} 名` : '已确认的最终集合点'}</span><button class="icon-button" data-action="close-poi" aria-label="关闭地点详情">${icon('close')}</button></div>
+      <div class="candidate-body"><div class="candidate-title"><h3 id="poi-title">${esc(p.name)}</h3><div class="score">${p.score.toFixed(1)}<small>/ 10</small></div></div><p class="address">${icon('pin')}${esc(p.area)}</p><p class="poi-description">${esc(p.subtitle)}</p>
         <div class="metrics"><div><small>我的预计用时</small><strong>${mine?.minutes ?? '—'}<span> 分钟</span></strong></div><div><small>全员平均用时</small><strong>${p.average}<span> 分钟</span></strong></div></div>
         <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${p.dimensions.preference.toFixed(1)} / 10 分` : `便利度 ${p.dimensions.transit.toFixed(1)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
-        <button class="score-link" data-action="details" data-value="${p.id}">评分依据与路线比较 ${icon('chevron')}</button>
-        <div class="vote-row"><span><strong>${count}</strong> 票支持</span><button class="button ${vote === p.id || winner ? 'primary' : 'vote-button'}" data-action="vote" data-value="${p.id}" ${a.status !== 'voting' || a.paused ? 'disabled' : ''}>${vote === p.id || winner ? icon('check') : ''}${winner ? '最终集合点' : vote === p.id ? '我已投票' : vote ? '改投这里' : '投票给这里'}</button></div>
+        <details class="poi-details"><summary>评分依据与成员路线比较</summary>${scoreDetails(p)}</details>
+        <div class="vote-row"><span><strong>${count}</strong> 票支持</span><button class="button ${vote === p.id || winner ? 'primary' : 'vote-button'}" data-action="vote" data-value="${p.id}" ${a.status !== 'voting' || a.paused || !canAccess() || a.deadline <= Date.now() ? 'disabled' : ''}>${vote === p.id || winner ? icon('check') : ''}${winner ? '最终集合点' : vote === p.id ? '我已投票' : vote ? '改投这里' : '投票给这里'}</button></div>
+        <p class="poi-vote-status">${a.paused ? '活动已暂停，暂不可投票或改票' : a.status === 'voting' ? a.deadline <= Date.now() ? '本轮投票已截止，正在更新结果' : vote === p.id ? '这是你当前的选择，截止前可以改票' : '三组推荐共用每人一票，截止前可以改票' : statusText(a)} · 预计费用：未知</p>
+        ${winner ? '<button class="button light full" data-action="navigate">打开高德导航</button>' : ''}
       </div></article>`;
+  }
+  function currentPoiContext() {
+    return [active().id, viewer(), group, active().round].join(':');
+  }
+  function renderPoiPopup() {
+    const p = mapPoints().find(p => p.id === selectedPoi);
+    if (!p || !canAccess()) return '';
+    return `<section id="poi-popup" class="poi-popup" role="region" aria-labelledby="poi-title" tabindex="-1">${candidateCard(p, (active().groups[group] || []).indexOf(p.id))}</section>`;
+  }
+  function positionPoiPopup() {
+    const popup = $('#poi-popup'), canvas = $('.map-canvas'), marker = document.getElementById(`marker-${selectedPoi}`);
+    if (!popup || !canvas || !marker) return;
+    if (window.matchMedia('(max-width: 700px)').matches) {
+      popup.style.removeProperty('left'); popup.style.removeProperty('top'); popup.style.removeProperty('max-height');
+      return;
+    }
+    const r = canvas.getBoundingClientRect(), m = marker.getBoundingClientRect();
+    const width = popup.offsetWidth, gap = 14, margin = 12;
+    const headerBottom = $('.site-header').getBoundingClientRect().bottom;
+    const top = Math.max(margin, headerBottom + margin - r.top);
+    const bottom = Math.min(r.height - margin, window.innerHeight - margin - r.top);
+    popup.style.maxHeight = `${Math.max(100, bottom - top)}px`;
+    const right = m.right - r.left + gap;
+    const left = right + width <= r.width - margin ? right : m.left - r.left - width - gap;
+    popup.style.left = `${Math.max(margin, Math.min(left, r.width - width - margin))}px`;
+    popup.style.top = `${Math.max(top, Math.min(m.top - r.top - 32, bottom - popup.offsetHeight))}px`;
+  }
+  function updatePoiPopup(focus = false) {
+    const host = $('#poi-popup-host');
+    if (!host) return;
+    host.innerHTML = renderPoiPopup();
+    document.querySelectorAll('.poi-marker').forEach(el => {
+      const selected = el.dataset.value === selectedPoi;
+      el.classList.toggle('selected', selected); el.setAttribute('aria-expanded', String(selected));
+    });
+    document.querySelectorAll('.poi-shortcuts button').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.value === selectedPoi)));
+    positionPoiPopup();
+    if (focus) $('#poi-popup')?.focus({ preventScroll: true });
+  }
+  function closePoi(restoreFocus = true) {
+    const fallback = document.getElementById(`marker-${selectedPoi}`);
+    selectedPoi = null; poiContext = null;
+    updatePoiPopup();
+    if (restoreFocus) (poiTrigger?.isConnected ? poiTrigger : fallback)?.focus({ preventScroll: true });
+    poiTrigger = null;
+  }
+  function refreshVoteUI() {
+    // Retain the popup node, expanded details, scroll position and keyboard focus.
+    const popup = $('#poi-popup');
+    if (popup) {
+      const template = document.createElement('template');
+      template.innerHTML = renderPoiPopup();
+      const oldRow = popup.querySelector('.vote-row'), newRow = template.content.querySelector('.vote-row');
+      if (oldRow && newRow) {
+        oldRow.querySelector('span').innerHTML = newRow.querySelector('span').innerHTML;
+        const button = oldRow.querySelector('button'), next = newRow.querySelector('button');
+        button.innerHTML = next.innerHTML; button.className = next.className; button.disabled = next.disabled;
+      }
+      popup.querySelector('.candidate').classList.toggle('voted', active().votes[viewer()] === selectedPoi);
+      popup.querySelector('.poi-vote-status').textContent = template.content.querySelector('.poi-vote-status').textContent;
+    }
+    const support = $('.recommend-support');
+    if (support) support.innerHTML = memberPanel() + votePanel();
   }
   function memberPanel() {
     const a = active();
@@ -195,8 +264,8 @@
       <div class="countdown">${icon('clock')}<span>${a.paused ? '倒计时已暂停' : '距离本轮投票截止'}<strong id="countdown">${timerLabel(a)}</strong></span></div>
       <p class="panel-tip">每人一票，截止前可改票。平票按本轮综合排序确定（当前为演示等权参考分）。</p>
       ${isHost() ? `<button class="button full primary" data-action="finish" ${!all || a.status !== 'voting' || a.paused ? 'disabled' : ''}>${icon('check')} 全员投票后确认结果</button>` : '<div class="subtle-box">全员投票后，发起者可提前确认结果。</div>'}
-      ${a.status === 'no-votes' && isHost() ? '<button class="button full primary" data-action="revote">零票截止 · 重新开启投票</button>' : ''}
-      ${!terminal(a) ? `<div class="management-actions">${isHost() ? `<button class="text-button" data-action="${a.paused ? 'resume' : 'pause'}">${icon(a.paused ? 'arrow' : 'pause')}${a.paused ? '恢复活动' : '暂停活动'}</button><button class="text-button muted" data-action="manage">管理活动 ${icon('chevron')}</button>` : '<button class="text-button" data-action="request">申请重新推荐</button>'}</div>` : ''}</section>`;
+      ${a.status === 'no-votes' && isHost() ? `<button class="button full primary" data-action="revote" ${a.paused || !M.ready(a) ? 'disabled' : ''}>零票截止 · 重新开启投票</button>` : ''}
+      ${!terminal(a) ? `<div class="management-actions">${isHost() ? `<button class="text-button" data-action="${a.paused ? 'resume' : 'pause'}">${icon(a.paused ? 'arrow' : 'pause')}${a.paused ? '恢复活动' : '暂停活动'}</button><button class="text-button muted" data-action="manage">管理活动 ${icon('chevron')}</button>` : `<button class="text-button" data-action="request" ${a.paused || !M.ready(a) ? 'disabled' : ''}>申请重新推荐</button>`}</div>` : ''}</section>`;
   }
   function resultBanner() {
     const a = active();
@@ -212,11 +281,16 @@
   function recommendations() {
     const a = active(), selectedGroup = M.GROUPS.find(g => g.id === group);
     const candidates = (a.groups[group] || []).map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
-    return `${activityHeader()}${resultBanner()}<div class="group-tabs" role="tablist" aria-label="推荐方案">${M.GROUPS.map(g => `<button role="tab" aria-selected="${g.id === group}" class="${g.id === group ? 'selected' : ''}" data-action="recommend-group" data-value="${g.id}"><span>${g.id === 'fairness' ? '01' : g.id === 'preference' ? '02' : '03'}</span><strong>${g.name}</strong><small>TOP ${a.groups[g.id]?.length || 3}</small></button>`).join('')}</div><div class="workspace-grid"><div class="main-column">${mapPanel()}
-      <section class="recommendations"><div class="section-heading"><div><h2>${selectedGroup.name}的好去处 <span>TOP ${candidates.length || 3}</span></h2><p>${selectedGroup.description}</p></div><button class="text-button" data-action="${isHost() ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !M.ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? isHost() ? '重新推荐' : '申请重新推荐' : '生成推荐'}</button></div>
-      ${candidates.length ? `<div class="candidate-grid">${candidates.map(candidateCard).join('')}</div>` : `<div class="empty-state"><span class="empty-icon">${icon('compass')}</span><h3>好去处，从了解每个人开始</h3><p>邀请至少一位伙伴，并为所有成员填写出行需求。<br>准备就绪后，生成三组 Top3 候选并开放投票。</p><button class="button primary" data-action="${M.ready(a) && isHost() ? 'recommend' : 'requirements'}">${M.ready(a) && isHost() ? '生成三组推荐' : '填写我的出行需求'} ${icon('arrow')}</button></div>`}
-      <div class="data-note">三组共用每人一票，同一地点跨组出现时票数合并。分值为演示参考，费用未知；甲方未约定评分权重。</div>${requestsPanel(a)}</section></div>
-      <aside class="right-column">${memberPanel()}${votePanel()}<div class="gentle-note">${icon('leaf')}<div><strong>见面之前，照顾每个人的期待。</strong><p>见面之后，把这一天写进手账。</p></div></div></aside></div>`;
+    return `<div class="recommend-page">${activityHeader()}${resultBanner()}
+      <section class="recommend-toolbar" aria-label="推荐方案"><div class="group-tabs" role="tablist" aria-label="推荐方案">${M.GROUPS.map(g => `<button id="tab-${g.id}" role="tab" aria-controls="recommend-map" aria-selected="${g.id === group}" tabindex="${g.id === group ? 0 : -1}" class="${g.id === group ? 'selected' : ''}" data-action="recommend-group" data-value="${g.id}"><strong>${g.name}</strong><small>TOP ${a.groups[g.id]?.length || 0}</small></button>`).join('')}</div>
+      <button class="text-button" data-action="${isHost() ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !M.ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? isHost() ? '重新推荐' : '申请重新推荐' : '生成推荐'}</button></section>
+      <p class="group-description">${selectedGroup.description} 点击地点标记查看详情并投票。</p>
+      <div id="recommend-map" role="tabpanel" aria-labelledby="tab-${group}">
+      <div class="poi-shortcuts" aria-label="快速选择地点">${mapPoints().map(p => `<button data-action="select-poi" data-value="${p.id}" aria-pressed="${selectedPoi === p.id}">${esc(p.name)}${a.resultId === p.id ? ' · 最终地点' : ''}</button>`).join('')}</div>
+      ${mapPanel()}
+      ${!candidates.length ? `<div class="empty-state compact"><h3>好去处，从了解每个人开始</h3><p>邀请至少一位伙伴，并为所有成员填写出行需求。准备就绪后生成推荐并开放投票。</p><button class="button primary" data-action="${M.ready(a) && isHost() ? 'recommend' : 'requirements'}" ${terminal(a) || a.paused ? 'disabled' : ''}>${M.ready(a) && isHost() ? '生成三组推荐' : '填写我的出行需求'}</button></div>` : ''}</div>
+      <div class="data-note">三组共用每人一票，同一地点跨组出现时票数合并。地图、路线与评分为演示数据；费用未知，甲方未约定评分权重。</div>
+      <div class="recommend-support">${memberPanel()}${votePanel()}</div>${requestsPanel(a)}</div>`;
   }
   function overview() {
     return `<div class="page-heading"><div><div class="eyebrow">MAKE ROOM FOR A GOOD TIME</div><h1>每一次相聚，都从这里开始<span class="heading-dot">.</span></h1><p>创建、恢复你的活动，和伙伴一起决定下一站。</p></div><button class="button primary" data-action="create">${icon('plus')} 创建活动</button></div>
@@ -244,8 +318,23 @@
     const a = active();
     if (!a.members.some(m => m.id === viewer())) state.identities[a.id] = a.hostId;
     const restricted = !canAccess() && !['calendar', 'overview'].includes(view);
-    $('#app').innerHTML = `${sidebar()}<div class="app-shell">${header()}<main>${restricted ? expiredPage() : ({ calendar: journal.page, recommend: recommendations, overview, members: membersPage, feedback: feedbackPage }[view])()}<footer><span>MeetPoint <span class="footer-separator">/</span> 见面有期，回忆有迹</span><span>OUR LITTLE JOURNAL · VOL. 02</span></footer></main></div>`;
+    if (view !== 'recommend' || poiContext !== currentPoiContext() || !mapPoints().some(p => p.id === selectedPoi) || restricted) selectedPoi = null;
+    const oldPopup = $('#poi-popup');
+    const popupScroll = oldPopup?.scrollTop || 0;
+    const expanded = oldPopup?.querySelector('details')?.open;
+    const hadPopupFocus = oldPopup?.contains(document.activeElement);
+    const focusedAction = hadPopupFocus ? document.activeElement.dataset.action : null;
+    const focusedSummary = hadPopupFocus && document.activeElement.matches('summary');
+    $('#app').innerHTML = `<div class="app-shell">${header()}<main>${restricted ? expiredPage() : ({ calendar: journal.page, recommend: recommendations, overview, members: membersPage, feedback: feedbackPage }[view])()}<footer><span>MeetPoint <span class="footer-separator">/</span> 见面有期，回忆有迹</span><span>OUR LITTLE JOURNAL · VOL. 02 <button class="text-button" data-action="about">关于这本手账</button></span></footer></main></div>`;
     journal.hydrate();
+    if ($('#poi-popup')) {
+      $('#poi-popup details').open = !!expanded;
+      positionPoiPopup(); $('#poi-popup').scrollTop = popupScroll;
+      if (hadPopupFocus) {
+        const target = focusedAction ? $('#poi-popup').querySelector(`[data-action="${focusedAction}"]`) : focusedSummary ? $('#poi-popup summary') : $('#poi-popup');
+        target?.focus({ preventScroll: true });
+      }
+    }
   }
   function openModal(title, body, wide = false) {
     focusBeforeModal = document.activeElement;
@@ -283,13 +372,16 @@
     const a = active();
     openModal('好的相聚，从一句邀请开始', `<p class="modal-intro">活动：${esc(a.title)}</p><div class="invite-code"><small>活动邀请码</small><strong>${a.code}</strong><button class="button light" data-action="copy">${icon('link')} 复制邀请链接</button></div><div class="notice">本地 Demo 不支持跨设备同步。可在此浏览器添加成员，再切换身份演示。</div><button class="button primary full" data-action="join-current" ${a.status === 'voting' || terminal(a) || a.paused ? 'disabled' : ''}>添加演示成员 ${icon('plus')}</button>${a.status === 'voting' ? '<p class="panel-tip">本轮正在投票，成员名单已锁定。可创建新活动体验邀请流程。</p>' : ''}`);
   }
-  function details(id) {
-    const a = active(), p = a.candidates.find(p => p.id === id);
-    if (!p) return;
-    openModal(`${esc(p.name)} · 为什么推荐这里`, `<div class="detail-score"><span>演示参考分 · 非约定权重</span><strong>${p.score.toFixed(1)}<small> / 10</small></strong><p>各维度采用 0—10 分。三组分别按公平性、偏好匹配、交通便利性优先排序。</p></div>
+  function scoreDetails(p) {
+    const a = active();
+    return `<div class="detail-score"><span>演示参考分 · 非约定权重</span><strong>${p.score.toFixed(1)}<small> / 10</small></strong><p>各维度采用 0—10 分。三组分别按公平性、偏好匹配、交通便利性优先排序。</p></div>
       <div class="dimension-list">${[['fairness', '出行公平性', `最长与最短出行时间相差 ${p.gap} 分钟；演示公式：10 − 时间差 / 8`], ['time', '整体耗时', `全员平均 ${p.average} 分钟；演示公式：10 − 平均用时 / 12`], ['preference', '偏好匹配', '演示匹配模型：活动偏好 60%，示例预算适配 40%；并非甲方约定权重'], ['transit', '交通便利', '内置示例站点便利分，待真实地图数据替换']].map(([key, label, help]) => `<div class="dimension"><div><strong>${label}</strong><span>${p.dimensions[key].toFixed(1)}</span></div><div class="progress-track"><span style="width:${p.dimensions[key] * 10}%"></span></div><p>${help}</p></div>`).join('')}</div>
       <h3>本轮成员出行比较</h3><div class="member-table-wrap"><table><thead><tr><th>成员</th><th>预计用时</th><th>预计费用</th></tr></thead><tbody>${p.routes.map(r => `<tr><td>${esc(a.members.find(m => m.id === r.memberId)?.name || '已退出成员')}</td><td>${r.minutes} 分钟</td><td>未知</td></tr>`).join('')}</tbody></table></div>
-      <div class="notice">甲方未约定评分权重。本 Demo 使用四维等权均值作为参考分及平票时的本轮综合排序依据，并非已确认的正式算法。路线为直线距离模拟；费用未知，不纳入评分。示例预算不代表真实报价。</div>`, true);
+      <div class="notice">甲方未约定评分权重。本 Demo 使用四维等权均值作为参考分及平票时的本轮综合排序依据，并非已确认的正式算法。路线为直线距离模拟；费用未知，不纳入评分。示例预算不代表真实报价。</div>`;
+  }
+  function details(id) {
+    const p = active().candidates.find(p => p.id === id);
+    if (p) openModal(`${esc(p.name)} · 为什么推荐这里`, scoreDetails(p), true);
   }
   function manage() {
     const a = active();
@@ -312,17 +404,19 @@
     window.open(`https://uri.amap.com/navigation?${params}`, '_blank', 'noopener,noreferrer');
   }
   const actions = {
-    view: value => { view = value; render(); },
+    view: value => { view = value; selectedPoi = null; menuOpen = false; render(); },
     create, invite, requirements, details, manage, navigate, join: () => join(),
     'join-current': () => join(active().code),
     'close-modal': closeModal,
-    'select-poi': value => { selectedPoi = value; render(); document.getElementById(`candidate-${value}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); },
+    'select-poi': value => { if (!mapPoints().some(p => p.id === value)) return; poiTrigger = document.activeElement; selectedPoi = value; poiContext = currentPoiContext(); updatePoiPopup(true); },
+    'close-poi': () => closePoi(),
+    'toggle-menu': () => { menuOpen = !menuOpen; $('#primary-nav').classList.toggle('is-open', menuOpen); $('[data-action="toggle-menu"]').setAttribute('aria-expanded', String(menuOpen)); },
     vote: value => run('vote', { id: value }, '选票已保存，截止前仍可改票'),
     recommend: () => active().candidates.length ? confirmAction('重新生成推荐？', '将按最新需求生成候选，并开启新的 24 小时投票。当前轮次与旧选票将失效。', 'recommend-confirm', '确认重新推荐') : run('recommend', {}, '推荐已生成，24 小时投票已开启'),
     'recommend-confirm': () => { if (run('recommend', {}, '已开始新一轮投票，旧票已清空')) closeModal(); },
     request: () => openModal('申请重新推荐', '<form id="request-form"><label>告诉大家为什么想换一组地点<textarea name="reason" maxlength="300" required placeholder="例如：出发地变了，希望大家的路程更均衡。"></textarea></label><button type="submit" class="button primary">提交申请</button></form>'),
     'reject-request': id => openModal('拒绝申请并说明原因', `<form id="reject-form"><input type="hidden" name="id" value="${esc(id)}"><label>原因（所有成员可见）<textarea name="reason" maxlength="300" required></textarea></label><button type="submit" class="button primary">确认拒绝</button></form>`),
-    'recommend-group': value => { group = value; selectedPoi = null; render(); },
+    'recommend-group': value => { group = value; selectedPoi = null; render(); document.getElementById(`tab-${value}`)?.focus({ preventScroll: true }); },
     'identity-info': () => { const info = M.access(active(), viewer()); openModal('我的演示身份', `<p class="modal-intro">${esc(self().name)} · ${self().identityType === 'account' ? '演示账号（7 天）' : '游客（24 小时）'}</p><p>未完成活动的恢复截止：${new Date(info.expiresAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</p><p class="panel-tip">从本人最近一次有效操作起算。仅查看、切换视角和自动计票不会续期。已完成的聚会手账不按此期限清理；演示身份不是真实认证。</p>`); },
     finish: () => confirmAction('确认这次相聚的地点？', '将按有效票数确定集合点；平票按本轮综合排名决定。确认后结果不可修改。', 'finish-confirm', '确定集合点'),
     'finish-confirm': () => { if (run('finish', {}, '集合地点已确定，准备出发吧！')) closeModal(); },
@@ -344,20 +438,36 @@
     about: () => openModal('关于这本相聚手账', '<p class="modal-intro">根据 neXus 团队 MeetPoint SRS V1.1 初始化的本地交互原型。</p><ul class="about-list"><li>支持三组 Top3、申请审批与原因展示、多轮投票，以及日历、照片、每人感受与留言。</li><li>右上角可切换成员，模拟不同参与者的操作。</li><li>数据保存在本浏览器；没有真实登录、服务器同步或管理员权限。</li><li>示意地图和出行时间均为模拟，未调用地图定位接口。导航按钮会打开第三方地图并传递当前示例出发地与目的地。</li><li>已实现游客 24 小时、演示账号 7 天的本地恢复检查；生产认证与隐私隔离仍需后端。照片保存在本浏览器数据库，清除网站数据会删除手账。</li></ul>')
   };
   function activate(id, nextView = 'calendar') {
-    state.activeId = id; state.identities[id] ||= active().hostId; view = nextView; save();
+    state.activeId = id; state.identities[id] ||= active().hostId; selectedPoi = null; view = nextView; save();
   }
   const journal = window.createMeetPointJournal({ M, esc, icon, avatar, getState: () => state, active, viewer, activate, replace, save, render, openModal, toast, create, statusText });
   Object.assign(actions, journal.actions);
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-action]');
+    if (!button && event.target.closest('.map-canvas')) closePoi();
+    if (menuOpen && !event.target.closest('.site-header')) { menuOpen = false; $('#primary-nav')?.classList.remove('is-open'); $('[data-action="toggle-menu"]')?.setAttribute('aria-expanded', 'false'); }
     if (!button || button.disabled) return;
     event.preventDefault();
     try { await actions[button.dataset.action]?.(button.dataset.value); } catch (error) { toast(error.message); }
   });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !$('#modal').open) {
+      if (selectedPoi) { event.preventDefault(); closePoi(); }
+      else if (menuOpen) { actions['toggle-menu'](); $('[data-action="toggle-menu"]').focus(); }
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && event.target.matches('[role="tab"]') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const i = M.GROUPS.findIndex(g => g.id === group);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? M.GROUPS.length - 1 : (i + (event.key === 'ArrowRight' ? 1 : -1) + M.GROUPS.length) % M.GROUPS.length;
+      actions['recommend-group'](M.GROUPS[next].id);
+    }
+  });
+  window.addEventListener('resize', positionPoiPopup);
+  window.addEventListener('scroll', positionPoiPopup, { passive: true });
   document.addEventListener('change', async event => {
     try {
       await journal.change(event.target);
-      if (event.target.id === 'identity') { state.identities[active().id] = event.target.value; save(); render(); toast(`已切换到 ${self().name} 的演示视角`); }
+      if (event.target.id === 'identity') { state.identities[active().id] = event.target.value; selectedPoi = null; save(); render(); $('#identity')?.focus({ preventScroll: true }); toast(`已切换到 ${self().name} 的演示视角`); }
     } catch (error) { toast(error.message); }
   });
   document.addEventListener('submit', async event => {
