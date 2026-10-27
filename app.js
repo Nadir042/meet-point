@@ -1,8 +1,21 @@
-/* Browser-local prototype; switching identity is deliberately exposed for demonstrations. */
+/* Unified demo: new activities use the shared API; older seeded examples stay browser-local. */
 (() => {
   'use strict';
   const M = window.MeetPoint;
   const STORAGE_KEY = 'meetpoint-demo-v1';
+  const SHARED_KEY = 'meetpoint-shared-sessions-v1';
+  const PROFILE_KEY = 'meetpoint-guest-profiles-v1';
+  const ACCOUNT_KEY = 'meetpoint-account-session-v1';
+  const AVATAR_KEY = 'meetpoint-local-avatars-v1';
+  const sessionKey = (profileId, activityId) => `${profileId}|${activityId}`;
+  const sessionActivityId = key => key.split('|').at(-1);
+  let sharedSessions = {};
+  try { sharedSessions = JSON.parse(localStorage.getItem(SHARED_KEY)) || {}; } catch { sharedSessions = {}; }
+  let accountAuth = null;
+  try { accountAuth = JSON.parse(localStorage.getItem(ACCOUNT_KEY)); } catch { accountAuth = null; }
+  let localAvatars = {};
+  try { localAvatars = JSON.parse(localStorage.getItem(AVATAR_KEY)) || {}; } catch { localAvatars = {}; }
+  const sharedPhotoUrls = new Map();
   const $ = selector => document.querySelector(selector);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icons = {
@@ -43,7 +56,60 @@
     return { version: 2, activities: [a, ...memories], activeId: a.id, identities: Object.fromEntries([a, ...memories].map(x => [x.id, x.hostId])), feedback: [] };
   }
   let state = load();
-  let view = 'calendar';
+  let profiles;
+  let newProfileStore = false;
+  let defaultGuestId = null;
+  try { profiles = JSON.parse(localStorage.getItem(PROFILE_KEY)); } catch { profiles = null; }
+  if (!profiles || !Array.isArray(profiles.list)) {
+    const initial = { id: M.uid(), name: '游客', lastActivityId: null };
+    // First visit opens the original guided example; the guest profile remains available for shared activities.
+    profiles = { activeId: 'examples', lastGuestId: initial.id, list: [initial] };
+    newProfileStore = true;
+    defaultGuestId = initial.id;
+  }
+  const migratedSessions = {};
+  for (const [key, session] of Object.entries(sharedSessions)) {
+    const id = sessionActivityId(key);
+    if (session.profileId && profiles.list.some(profile => profile.id === session.profileId)) continue;
+    // Legacy sessions have no reliable person identifier. Preserve each session separately.
+    const profile = { id: M.uid(), name: session.name || '游客', lastActivityId: id };
+    profiles.list.push(profile);
+    session.profileId = profile.id;
+  }
+  for (const [key, session] of Object.entries(sharedSessions))
+    migratedSessions[sessionKey(session.profileId, sessionActivityId(key))] = session;
+  sharedSessions = migratedSessions;
+  const lastSession = Object.entries(sharedSessions).find(([key]) => sessionActivityId(key) === state.activeId)?.[1];
+  if (newProfileStore && Object.keys(sharedSessions).length) {
+    profiles.activeId = lastSession?.profileId || Object.values(sharedSessions)[0].profileId;
+    profiles.list = profiles.list.filter(profile => profile.id !== defaultGuestId);
+  }
+  for (const profile of profiles.list.filter(item => item.kind !== 'account')) {
+    // Undo the earlier generated-label experiment without combining distinct credentials.
+    if (/^游客\d{6}$/.test(profile.name))
+      profile.name = Object.values(sharedSessions).find(session => session.profileId === profile.id)?.name || '游客';
+  }
+  if (!profiles.list.some(profile => profile.id === profiles.lastGuestId && profile.kind !== 'account'))
+    profiles.lastGuestId = profiles.list.find(profile => profile.kind !== 'account')?.id || null;
+  if (!profiles.list.some(profile => profile.id === profiles.activeId) && profiles.activeId !== 'examples')
+    profiles.activeId = lastSession?.profileId || profiles.list[0]?.id || 'examples';
+  if (accountAuth?.id && accountAuth?.token) {
+    const id = `account:${accountAuth.id}`;
+    profiles.list = profiles.list.filter(profile => profile.kind !== 'account' || profile.id === id);
+    if (!profiles.list.some(profile => profile.id === id)) profiles.list.push({ id, name: accountAuth.username, kind: 'account', lastActivityId: null });
+    if (String(profiles.activeId).startsWith('account:')) profiles.activeId = id;
+  } else {
+    profiles.list = profiles.list.filter(profile => profile.kind !== 'account');
+    if (String(profiles.activeId).startsWith('account:')) profiles.activeId = 'examples';
+  }
+  function saveProfiles() {
+    localStorage.setItem(PROFILE_KEY, JSON.stringify(profiles));
+    localStorage.setItem(SHARED_KEY, JSON.stringify(sharedSessions));
+    if (accountAuth) localStorage.setItem(ACCOUNT_KEY, JSON.stringify(accountAuth));
+    else localStorage.removeItem(ACCOUNT_KEY);
+  }
+  try { saveProfiles(); } catch { storageWarning = '浏览器存储不可用，游客身份可能无法恢复。'; }
+  let view = profiles.activeId === 'examples' ? 'calendar' : 'overview';
   let group = 'fairness';
   let selectedPoi = null;
   let poiContext = null;
@@ -53,6 +119,73 @@
   let toastTimer;
   let lastAccessState = null;
   const active = () => state.activities.find(a => a.id === state.activeId) || state.activities[0];
+  const sessionFor = (id, profileId = profiles.activeId) => sharedSessions[sessionKey(profileId, id)];
+  const sharedActivityIds = new Set(Object.keys(sharedSessions).map(sessionActivityId));
+  state.activities = state.activities.filter(a => !sharedActivityIds.has(a.id) && !a.viewerId);
+  if (!state.activities.length) {
+    const example = M.seed();
+    state.activities.push(example);
+    state.identities[example.id] = example.hostId;
+  }
+  const isShared = a => !!sessionFor(a?.id)?.token;
+  const currentProfile = () => profiles.list.find(profile => profile.id === profiles.activeId);
+  const isAccount = () => currentProfile()?.kind === 'account';
+  const visibleActivities = () => state.activities.filter(a => profiles.activeId === 'examples' ? !sharedActivityIds.has(a.id) : !!sessionFor(a.id));
+  async function restoreProfile() {
+    const profileId = profiles.activeId;
+    if (isAccount()) {
+      const result = await api('/api/account/activities', 'GET', null, accountAuth.token);
+      for (const key of Object.keys(sharedSessions)) if (key.startsWith(`${profileId}|`)) delete sharedSessions[key];
+      for (const activity of result.activities) {
+        sharedSessions[sessionKey(profileId, activity.id)] = { token: accountAuth.token, title: activity.title, name: activity.members.find(m => m.id === activity.viewerId)?.name, profileId };
+        if (profiles.activeId === profileId) acceptShared({ activity });
+      }
+      saveProfiles();
+      return [];
+    }
+    return Promise.allSettled(Object.entries(sharedSessions).filter(([, session]) => session.profileId === profileId).map(async ([key, session]) => {
+      try {
+        const result = await api(`/api/activities/${sessionActivityId(key)}`, 'GET', null, session.token);
+        if (profiles.activeId === profileId) acceptShared(result);
+      } catch (error) {
+        if (error.status === 403 || error.status === 401) { delete sharedSessions[key]; saveProfiles(); return; }
+        throw error;
+      }
+    }));
+  }
+  async function selectProfile(id) {
+    if (id !== 'examples' && !profiles.list.some(profile => profile.id === id)) return;
+    profiles.activeId = id;
+    if (profiles.list.some(profile => profile.id === id && profile.kind !== 'account')) profiles.lastGuestId = id;
+    for (const url of sharedPhotoUrls.values()) URL.revokeObjectURL(url);
+    sharedPhotoUrls.clear();
+    state.activities = state.activities.filter(a => !sharedActivityIds.has(a.id));
+    const results = await restoreProfile();
+    const activities = visibleActivities();
+    state.activeId = activities.find(a => a.id === currentProfile()?.lastActivityId)?.id || activities[0]?.id || state.activeId;
+    selectedPoi = null;
+    view = 'overview';
+    saveProfiles(); save(); render();
+    if (results.some(result => result.status === 'rejected')) toast('部分共享活动暂时无法恢复，请检查服务或身份期限');
+  }
+  function attachToProfile(a, token) {
+    let profile = currentProfile();
+    if (isAccount()) token = accountAuth.token;
+    else if (!profile) {
+      profile = profiles.list.find(item => item.id === profiles.lastGuestId && item.kind !== 'account');
+      if (!profile) profile = { id: M.uid(), name: '游客', lastActivityId: null };
+      if (!profiles.list.some(item => item.id === profile.id)) profiles.list.push(profile);
+    }
+    if (profile.kind !== 'account' && profile.name === '游客')
+      profile.name = a.members.find(m => m.id === a.viewerId).name;
+    if (profile.kind !== 'account') profiles.lastGuestId = profile.id;
+    sharedSessions[sessionKey(profile.id, a.id)] = { token, title: a.title, name: a.members.find(m => m.id === a.viewerId).name, profileId: profile.id };
+    sharedActivityIds.add(a.id);
+    profiles.activeId = profile.id;
+    profile.lastActivityId = a.id;
+    saveProfiles();
+  }
+  const ready = a => isShared(a) ? a.requirementsReady : M.ready(a);
   const viewer = () => state.identities[active().id];
   const self = () => active().members.find(m => m.id === viewer());
   const isHost = () => active().hostId === viewer();
@@ -60,13 +193,66 @@
   const terminal = a => ['completed', 'cancelled'].includes(a.status);
   const statusText = a => a.paused ? '活动已暂停' : ({ collecting: '正在收集需求', voting: '正在投票', 'no-votes': '等待重新投票', completed: '已确定集合点', cancelled: '活动已取消' }[a.status]);
   function save() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state,
+      activities: state.activities.filter(a => !sharedActivityIds.has(a.id)),
+      identities: Object.fromEntries(Object.entries(state.identities).filter(([id]) => !sharedActivityIds.has(id)))
+    })); }
     catch { throw new Error('本地保存失败，可能是存储空间不足。请释放空间后重试。'); }
   }
   function replace(a) {
     const previous = state.activities;
     state.activities = state.activities.map(old => old.id === a.id ? a : old);
     try { save(); } catch (error) { state.activities = previous; throw error; }
+  }
+  async function api(url, method = 'GET', data, token) {
+    const response = await fetch(url, { method, headers: { ...(data ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: data ? JSON.stringify(data) : undefined });
+    const result = await response.json();
+    if (!response.ok) { const error = new Error(result.error || '服务器请求失败'); error.status = response.status; throw error; }
+    return result;
+  }
+  function acceptShared(result) {
+    const a = result.activity;
+    sharedActivityIds.add(a.id);
+    const index = state.activities.findIndex(old => old.id === a.id);
+    if (index < 0) state.activities.unshift(a);
+    else state.activities[index] = a;
+    state.identities[a.id] = a.viewerId;
+    return a;
+  }
+  async function refreshShared(id = active().id, show = true) {
+    if (!isShared({ id })) return;
+    const result = await api(`/api/activities/${id}`, 'GET', null, sessionFor(id).token);
+    const previous = state.activities.find(a => a.id === id);
+    if (JSON.stringify(previous) !== JSON.stringify(result.activity)) {
+      acceptShared(result);
+      if (show) render();
+    }
+  }
+  async function perform(action, data = {}) {
+    if (isShared(active())) {
+      const id = active().id;
+      const result = await api(`/api/activities/${id}/actions`, 'POST', { action, data }, sessionFor(id).token);
+      acceptShared(result);
+    } else replace(M.act(active(), viewer(), action, data));
+  }
+  async function uploadSharedPhoto(photo) {
+    const a = active();
+    const bytes = new Uint8Array(await photo.blob.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+    const result = await api(`/api/activities/${a.id}/photos`, 'POST', { id: photo.id, name: photo.name, mime: photo.blob.type, base64: btoa(binary) }, sessionFor(a.id).token);
+    acceptShared(result);
+  }
+  async function sharedPhotoUrl(activityId, photoId) {
+    if (sharedPhotoUrls.has(photoId)) return sharedPhotoUrls.get(photoId);
+    const response = await fetch(`/api/activities/${activityId}/photos/${photoId}`, { headers: { Authorization: `Bearer ${sessionFor(activityId).token}` } });
+    if (!response.ok) throw new Error('照片暂时无法读取');
+    const url = URL.createObjectURL(await response.blob());
+    sharedPhotoUrls.set(photoId, url);
+    return url;
+  }
+  function forgetSharedPhoto(photoId) {
+    if (sharedPhotoUrls.has(photoId)) { URL.revokeObjectURL(sharedPhotoUrls.get(photoId)); sharedPhotoUrls.delete(photoId); }
   }
   function toast(message) {
     if ($('#modal').open) {
@@ -85,15 +271,29 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4000);
   }
-  function run(action, data = {}, message = '已更新') {
+  async function run(action, data = {}, message = '已更新') {
     try {
-      replace(M.act(active(), viewer(), action, data));
+      const sharedId = isShared(active()) ? active().id : null;
+      await perform(action, data);
+      if (action === 'leave' && sharedId) {
+        delete sharedSessions[sessionKey(profiles.activeId, sharedId)];
+        saveProfiles();
+        state.activities = state.activities.filter(a => a.id !== sharedId);
+        state.activeId = state.activities[0].id;
+        view = 'overview'; save(); render(); toast(message); return true;
+      }
       if (!active().members.some(m => m.id === viewer())) state.identities[active().id] = active().hostId;
       save(); if (action === 'vote' && view === 'recommend' && canAccess()) refreshVoteUI(); else render(); toast(message); return true;
     } catch (error) { toast(error.message); return false; }
   }
   function avatar(m, index, small = false) {
     return `<span class="avatar avatar-${index % 5}${small ? ' small' : ''}" title="${esc(m.name)}">${esc(m.name.slice(0, 1))}</span>`;
+  }
+  function identityAvatar(name, id, small = true) {
+    const image = localAvatars[id];
+    return image && /^data:image\/(?:jpeg|png|webp);base64,/.test(image)
+      ? `<span class="avatar avatar-0${small ? ' small' : ''}" title="${esc(name)}"><img src="${esc(image)}" alt=""></span>`
+      : avatar({ name }, 0, small);
   }
   function art(kind, name) {
     const trees = '<g fill="#75866a"><circle cx="37" cy="84" r="17"/><circle cx="272" cy="86" r="20"/></g><g stroke="#53674b" stroke-width="3"><path d="M37 88v32m235-30v30"/></g>';
@@ -110,12 +310,13 @@
     return `<svg viewBox="0 0 310 146" role="img" aria-label="${esc(name)}建筑示意插画"><circle cx="242" cy="32" r="19" fill="#f5df9b"/><path d="M0 122Q73 108 155 122t155 0v24H0Z" fill="#cbd3b8"/>${trees}${building}<path d="M0 136h310" stroke="#f9f5e8" stroke-width="3"/><g fill="#748369"><circle cx="51" cy="123" r="7"/><circle cx="243" cy="124" r="10"/></g></svg>`;
   }
   function header() {
-    const a = active();
+    const profile = currentProfile();
+    const identityName = profile ? profile.name : '本机示例';
     const navs = [['calendar', '相聚日历'], ['overview', '我的活动'], ['recommend', '集合点推荐'], ['members', '成员与需求'], ['feedback', '意见反馈']];
     return `<header class="site-header">
       <a class="site-brand" href="#" data-action="view" data-value="calendar" aria-label="MeetPoint 相聚日历"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint</span></a>
       <nav id="primary-nav" class="primary-nav ${menuOpen ? 'is-open' : ''}" aria-label="主导航">${navs.map(([id, label]) => `<button class="top-nav-item ${view === id ? 'active' : ''}" ${view === id ? 'aria-current="page"' : ''} data-action="view" data-value="${id}">${label}</button>`).join('')}</nav>
-      <div class="header-account"><button class="text-button identity-kind" data-action="identity-info">${self()?.identityType === 'account' ? '演示账号 · 7天' : '游客 · 24小时'}</button><div class="identity">${avatar(self() || { name: '访客' }, Math.max(0, a.members.findIndex(m => m.id === viewer())), true)}<label class="sr-only" for="identity">切换演示成员</label><select id="identity">${a.members.map(m => `<option value="${m.id}" ${m.id === viewer() ? 'selected' : ''}>${esc(m.name)}${m.id === a.hostId ? ' · 发起者' : ' · 成员'}</option>`).join('')}</select></div></div>
+      <div class="header-account"><button class="text-button identity-kind" data-action="identity-info" aria-label="身份与设置：${esc(identityName)}">${identityAvatar(identityName, profiles.activeId)}<span>${esc(identityName)}</span></button></div>
       <button class="menu-toggle button light" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav">菜单</button>
     </header>`;
   }
@@ -245,9 +446,9 @@
     const a = active();
     const members = M.visibleMembers(a, viewer());
     return `<section class="panel member-panel"><div class="panel-heading"><h3>一起出发的伙伴</h3><span class="count-badge">${a.members.length} / 10</span></div>
-      <div class="member-list">${members.map((m, i) => `<div class="member-row">${avatar(m, i)}<div><strong>${esc(m.name)} ${m.id === viewer() ? '<small>我</small>' : ''}${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</strong><p>${m.origin ? esc(m.origin.name) : a.members[i].origin ? `${icon('lock')} 出发地已隐藏` : '待填写出行需求'}</p></div><span class="member-check ${a.votes[m.id] ? 'is-voted' : ''}" title="${a.votes[m.id] ? '已投票' : a.members[i].origin ? '已填写需求' : '待填写'}">${a.votes[m.id] ? icon('check') : a.members[i].origin ? '就绪' : '待填'}</span></div>`).join('')}</div>
+      <div class="member-list">${members.map((m, i) => `<div class="member-row">${avatar(m, i)}<div><strong>${esc(m.name)} ${m.id === viewer() ? '<small>我</small>' : ''}${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</strong><p>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? `${icon('lock')} 出发地已隐藏` : '待填写出行需求'}</p></div><span class="member-check ${a.votes[m.id] ? 'is-voted' : ''}" title="${a.votes[m.id] ? '已投票' : a.members[i].ready || a.members[i].origin ? '已填写需求' : '待填写'}">${a.votes[m.id] ? icon('check') : a.members[i].ready || a.members[i].origin ? '就绪' : '待填'}</span></div>`).join('')}</div>
       <button class="button full light" data-action="requirements" ${terminal(a) || a.paused ? 'disabled' : ''}>${icon('settings')} 编辑我的出行需求</button>
-      <p class="panel-tip">通过右上角身份切换，可演示每位成员的填写与投票。</p></section>`;
+      <p class="panel-tip">${isShared(a) ? '每位成员在自己的浏览器填写和投票。' : '通过右上角身份切换，可演示每位成员的填写与投票。'}</p></section>`;
   }
   function timerLabel(a) {
     if (a.status !== 'voting') return '—';
@@ -264,8 +465,8 @@
       <div class="countdown">${icon('clock')}<span>${a.paused ? '倒计时已暂停' : '距离本轮投票截止'}<strong id="countdown">${timerLabel(a)}</strong></span></div>
       <p class="panel-tip">每人一票，截止前可改票。平票按本轮综合排序确定（当前为演示等权参考分）。</p>
       ${isHost() ? `<button class="button full primary" data-action="finish" ${!all || a.status !== 'voting' || a.paused ? 'disabled' : ''}>${icon('check')} 全员投票后确认结果</button>` : '<div class="subtle-box">全员投票后，发起者可提前确认结果。</div>'}
-      ${a.status === 'no-votes' && isHost() ? `<button class="button full primary" data-action="revote" ${a.paused || !M.ready(a) ? 'disabled' : ''}>零票截止 · 重新开启投票</button>` : ''}
-      ${!terminal(a) ? `<div class="management-actions">${isHost() ? `<button class="text-button" data-action="${a.paused ? 'resume' : 'pause'}">${icon(a.paused ? 'arrow' : 'pause')}${a.paused ? '恢复活动' : '暂停活动'}</button><button class="text-button muted" data-action="manage">管理活动 ${icon('chevron')}</button>` : `<button class="text-button" data-action="request" ${a.paused || !M.ready(a) ? 'disabled' : ''}>申请重新推荐</button>`}</div>` : ''}</section>`;
+      ${a.status === 'no-votes' && isHost() ? `<button class="button full primary" data-action="revote" ${a.paused || !ready(a) ? 'disabled' : ''}>零票截止 · 重新开启投票</button>` : ''}
+      ${!terminal(a) ? `<div class="management-actions">${isHost() ? `<button class="text-button" data-action="${a.paused ? 'resume' : 'pause'}">${icon(a.paused ? 'arrow' : 'pause')}${a.paused ? '恢复活动' : '暂停活动'}</button><button class="text-button muted" data-action="manage">管理活动 ${icon('chevron')}</button>` : `<button class="text-button" data-action="request" ${a.paused || !ready(a) ? 'disabled' : ''}>申请重新推荐</button>`}</div>` : ''}</section>`;
   }
   function resultBanner() {
     const a = active();
@@ -283,25 +484,26 @@
     const candidates = (a.groups[group] || []).map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
     return `<div class="recommend-page">${activityHeader()}${resultBanner()}
       <section class="recommend-toolbar" aria-label="推荐方案"><div class="group-tabs" role="tablist" aria-label="推荐方案">${M.GROUPS.map(g => `<button id="tab-${g.id}" role="tab" aria-controls="recommend-map" aria-selected="${g.id === group}" tabindex="${g.id === group ? 0 : -1}" class="${g.id === group ? 'selected' : ''}" data-action="recommend-group" data-value="${g.id}"><strong>${g.name}</strong><small>TOP ${a.groups[g.id]?.length || 0}</small></button>`).join('')}</div>
-      <button class="text-button" data-action="${isHost() ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !M.ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? isHost() ? '重新推荐' : '申请重新推荐' : '生成推荐'}</button></section>
+      <button class="text-button" data-action="${isHost() ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? isHost() ? '重新推荐' : '申请重新推荐' : '生成推荐'}</button></section>
       <p class="group-description">${selectedGroup.description} 点击地点标记查看详情并投票。</p>
       <div id="recommend-map" role="tabpanel" aria-labelledby="tab-${group}">
       <div class="poi-shortcuts" aria-label="快速选择地点">${mapPoints().map(p => `<button data-action="select-poi" data-value="${p.id}" aria-pressed="${selectedPoi === p.id}">${esc(p.name)}${a.resultId === p.id ? ' · 最终地点' : ''}</button>`).join('')}</div>
       ${mapPanel()}
-      ${!candidates.length ? `<div class="empty-state compact"><h3>好去处，从了解每个人开始</h3><p>邀请至少一位伙伴，并为所有成员填写出行需求。准备就绪后生成推荐并开放投票。</p><button class="button primary" data-action="${M.ready(a) && isHost() ? 'recommend' : 'requirements'}" ${terminal(a) || a.paused ? 'disabled' : ''}>${M.ready(a) && isHost() ? '生成三组推荐' : '填写我的出行需求'}</button></div>` : ''}</div>
+      ${!candidates.length ? `<div class="empty-state compact"><h3>好去处，从了解每个人开始</h3><p>邀请至少一位伙伴，并为所有成员填写出行需求。准备就绪后生成推荐并开放投票。</p><button class="button primary" data-action="${ready(a) && isHost() ? 'recommend' : 'requirements'}" ${terminal(a) || a.paused ? 'disabled' : ''}>${ready(a) && isHost() ? '生成三组推荐' : '填写我的出行需求'}</button></div>` : ''}</div>
       <div class="data-note">三组共用每人一票，同一地点跨组出现时票数合并。地图、路线与评分为演示数据；费用未知，甲方未约定评分权重。</div>
       <div class="recommend-support">${memberPanel()}${votePanel()}</div>${requestsPanel(a)}</div>`;
   }
   function overview() {
+    const activities = visibleActivities();
     return `<div class="page-heading"><div><div class="eyebrow">MAKE ROOM FOR A GOOD TIME</div><h1>每一次相聚，都从这里开始<span class="heading-dot">.</span></h1><p>创建、恢复你的活动，和伙伴一起决定下一站。</p></div><button class="button primary" data-action="create">${icon('plus')} 创建活动</button></div>
-      <div class="overview-actions"><button class="button light" data-action="join">${icon('link')} 使用邀请码加入</button><button class="text-button" data-action="sample">${icon('plus')} 新建示例活动</button></div>
-      <div class="activity-grid">${state.activities.map(a => `<article class="panel activity-card"><div class="inline"><span class="activity-symbol">${icon('people')}</span><span class="status">${statusText(a)}</span></div><h2>${esc(a.title)}</h2><p>${esc(a.date)} ${esc(a.time)} · ${esc(a.type)} · ${a.members.length} 位伙伴</p><div class="stacked-avatars">${a.members.slice(0, 5).map((m, i) => avatar(m, i, true)).join('')}</div><button class="button light full" data-action="open-activity" data-value="${a.id}">进入活动 ${icon('arrow')}</button></article>`).join('')}</div><div class="data-note">游客 24 小时、演示账号 7 天内可恢复未完成活动，从本人最近有效操作起算。跨设备同步与真实账号仍待后端接入。</div>`;
+      <div class="overview-actions"><button class="button light" data-action="join">${icon('link')} 使用邀请码加入</button><button class="text-button" data-action="identity-info">${isAccount() ? '我的账号' : '身份设置'}</button>${isAccount() ? '<button class="text-button" data-action="sample-journal">查看示例手账</button>' : '<button class="text-button" data-action="new-profile">＋ 新游客身份</button><button class="text-button" data-action="account-login">注册／登录</button>'}${profiles.activeId === 'examples' ? `<button class="text-button" data-action="sample">${icon('plus')} 新建示例活动</button>` : ''}</div>
+      <div class="activity-grid">${activities.map(a => `<article class="panel activity-card"><div class="inline"><span class="activity-symbol">${icon('people')}</span><span class="status">${isShared(a) ? '多人共享' : '本机示例'} · ${statusText(a)}</span></div><h2>${esc(a.title)}</h2><p>${esc(a.date)} ${esc(a.time)} · ${esc(a.type)} · ${a.members.length} 位伙伴</p><div class="stacked-avatars">${a.members.slice(0, 5).map((m, i) => avatar(m, i, true)).join('')}</div><button class="button light full" data-action="open-activity" data-value="${a.id}">进入活动 ${icon('arrow')}</button></article>`).join('') || `<div class="empty-state compact"><p>${isAccount() ? '这个账号还没有参与活动。使用邀请码加入，或创建一场新活动。' : '这个游客身份还没有参与活动。使用邀请码加入，或创建一场新活动。'}</p></div>`}</div><div class="data-note">${isAccount() ? '这里汇总本账号以不同昵称参与的活动。示例手账单独展示，不计入我的活动。' : '当前只显示所选游客身份参与的活动。切换到“本机示例”可查看引导数据；同一浏览器内的游客切换不提供账号级隐私保护。'}</div>`;
   }
   function membersPage() {
     const a = active();
     const members = M.visibleMembers(a, viewer());
     return `${activityHeader()}<section class="panel members-page"><div class="panel-heading"><h3>每个人的出行偏好</h3><button class="button primary" data-action="requirements" ${terminal(a) || a.paused ? 'disabled' : ''}>编辑我的需求</button></div>
-      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>预算上限</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(m.mode)}</td><td>${esc(m.preference)}</td><td>¥${m.budget}</td><td><span class="status">${a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
+      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>预算上限</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(m.mode)}</td><td>${esc(m.preference)}</td><td>¥${m.budget}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
       <div class="notice">${icon('lock')} 具体出发地只对本人或经本人授权的其他成员展示。此 Demo 的身份切换仅用于演示。</div>
       <div class="inline">${isHost() ? `<button class="button light" data-action="invite">邀请伙伴</button><button class="text-button" data-action="manage">管理活动</button>` : `<button class="text-button danger" data-action="leave" ${terminal(a) || a.paused || a.status === 'voting' ? 'disabled' : ''}>退出活动</button>`}</div></section>`;
   }
@@ -316,6 +518,7 @@
   }
   function render() {
     const a = active();
+    if (!visibleActivities().some(item => item.id === a.id) && !['calendar', 'overview', 'feedback'].includes(view)) view = 'overview';
     if (!a.members.some(m => m.id === viewer())) state.identities[a.id] = a.hostId;
     const restricted = !canAccess() && !['calendar', 'overview'].includes(view);
     if (view !== 'recommend' || poiContext !== currentPoiContext() || !mapPoints().some(p => p.id === selectedPoi) || restricted) selectedPoi = null;
@@ -358,19 +561,21 @@
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
       <button type="submit" class="button primary full">保存我的需求 ${icon('check')}</button></form>`);
   }
-  function identityOptions() {
-    return '<label>演示参与身份<select name="identityType"><option value="guest">游客 · 24 小时内恢复</option><option value="account">演示账号 · 7 天内恢复</option></select></label>';
-  }
+  function identityOptions() { return `<p class="panel-tip">${isAccount() ? '本次以登录账号参与。活动昵称可单独修改；未完成活动可在最近一次有效操作后 7 天内恢复。' : '本次以游客身份参与，可在最近一次有效操作后 24 小时内从本浏览器恢复。'}</p>`; }
+  const defaultNickname = () => {
+    const profile = isAccount() ? null : currentProfile() || profiles.list.find(item => item.id === profiles.lastGuestId);
+    return profile?.name === '游客' ? '' : profile?.name || '';
+  };
   function create(date = M.dateKey()) {
     if (!M.validDate(date)) date = M.dateKey();
-    openModal('在日历里，约一次见面', `<p class="modal-intro">先留一个日子，再一起决定在哪里相聚。</p><form id="create-form"><label>活动名称<input name="title" maxlength="40" required placeholder="例如：周五下班后的放松小聚"></label><div class="form-grid"><label>聚会日期<input name="date" type="date" value="${date}" required></label><label>见面时间<input name="time" type="time" value="18:30" required></label></div><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(self()?.name || '')}"></label><label>活动类型<select name="type">${Object.keys(M.OPTIONS).map(t => `<option>${t}</option>`).join('')}</select></label>${identityOptions()}<div class="subtle-box">创建后自动保留在当天日历。支持 2—10 人；演示账号仅用于验证恢复规则，不是真实登录。</div><button type="submit" class="button primary full">创建并邀请伙伴 ${icon('arrow')}</button></form>`);
+    openModal('在日历里，约一次见面', `<p class="modal-intro">先留一个日子，再一起决定在哪里相聚。</p><form id="create-form"><label>活动名称<input name="title" maxlength="40" required placeholder="例如：周五下班后的放松小聚"></label><div class="form-grid"><label>聚会日期<input name="date" type="date" value="${date}" required></label><label>见面时间<input name="time" type="time" value="18:30" required></label></div><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}"></label><label>活动类型<select name="type">${Object.keys(M.OPTIONS).map(t => `<option>${t}</option>`).join('')}</select></label>${identityOptions()}<div class="subtle-box">创建后自动保留在当天日历。支持 2—10 人；每位伙伴可使用游客身份或账号参与。</div><button type="submit" class="button primary full">创建并邀请伙伴 ${icon('arrow')}</button></form>`);
   }
   function join(code = '') {
-    openModal('加入一场相聚', `<p class="modal-intro">此版本可加入同一浏览器内已创建的活动。投票期间暂不开放新成员加入。</p><form id="join-form"><label>邀请码<input name="code" required maxlength="6" value="${esc(code)}" placeholder="输入 6 位邀请码"></label><label>你的昵称<input name="nickname" maxlength="16" required placeholder="让伙伴知道你是谁"></label>${identityOptions()}<button class="button primary full" type="submit">加入活动 ${icon('arrow')}</button></form>`);
+    openModal('加入一场相聚', `<p class="modal-intro">打开伙伴发来的邀请链接，或输入 6 位邀请码。投票期间暂不开放新成员加入。</p><form id="join-form"><label>邀请码<input name="code" required maxlength="6" value="${esc(code)}" placeholder="输入 6 位邀请码"></label><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}" placeholder="让伙伴知道你是谁"></label>${identityOptions()}<button class="button primary full" type="submit">加入活动 ${icon('arrow')}</button></form>`);
   }
   function invite() {
     const a = active();
-    openModal('好的相聚，从一句邀请开始', `<p class="modal-intro">活动：${esc(a.title)}</p><div class="invite-code"><small>活动邀请码</small><strong>${a.code}</strong><button class="button light" data-action="copy">${icon('link')} 复制邀请链接</button></div><div class="notice">本地 Demo 不支持跨设备同步。可在此浏览器添加成员，再切换身份演示。</div><button class="button primary full" data-action="join-current" ${a.status === 'voting' || terminal(a) || a.paused ? 'disabled' : ''}>添加演示成员 ${icon('plus')}</button>${a.status === 'voting' ? '<p class="panel-tip">本轮正在投票，成员名单已锁定。可创建新活动体验邀请流程。</p>' : ''}`);
+    openModal('好的相聚，从一句邀请开始', `<p class="modal-intro">活动：${esc(a.title)}</p><div class="invite-code"><small>活动邀请码</small><strong>${a.code}</strong><button class="button light" data-action="copy">${icon('link')} 复制邀请链接</button></div><div class="notice">${isShared(a) ? '把链接发给伙伴，对方可在自己的设备加入这场活动。' : '这是旧版本机示例；请新建活动来体验跨设备协作。'}</div>${a.status === 'voting' ? '<p class="panel-tip">本轮正在投票，成员名单已锁定。</p>' : ''}`);
   }
   function scoreDetails(p) {
     const a = active();
@@ -403,6 +608,10 @@
     });
     window.open(`https://uri.amap.com/navigation?${params}`, '_blank', 'noopener,noreferrer');
   }
+  function localIdentityChoices() {
+    const guests = profiles.list.filter(item => item.kind !== 'account');
+    return `<details class="identity-choices"><summary>切换本机身份</summary><div><button class="button light" data-action="switch-profile" data-value="examples" ${profiles.activeId === 'examples' ? 'disabled aria-current="true"' : ''}>本机示例</button>${guests.map(item => `<button class="button light" data-action="switch-profile" data-value="${esc(item.id)}" ${profiles.activeId === item.id ? 'disabled aria-current="true"' : ''}>${esc(item.name)}${guests.filter(guest => guest.name === item.name).length > 1 ? ` · ${esc(item.id.slice(-4))}` : ''}</button>`).join('')}</div><p class="panel-tip">同名身份用末尾四位区分，切换不会合并活动。</p></details>`;
+  }
   const actions = {
     view: value => { view = value; selectedPoi = null; menuOpen = false; render(); },
     create, invite, requirements, details, manage, navigate, join: () => join(),
@@ -413,34 +622,93 @@
     'toggle-menu': () => { menuOpen = !menuOpen; $('#primary-nav').classList.toggle('is-open', menuOpen); $('[data-action="toggle-menu"]').setAttribute('aria-expanded', String(menuOpen)); },
     vote: value => run('vote', { id: value }, '选票已保存，截止前仍可改票'),
     recommend: () => active().candidates.length ? confirmAction('重新生成推荐？', '将按最新需求生成候选，并开启新的 24 小时投票。当前轮次与旧选票将失效。', 'recommend-confirm', '确认重新推荐') : run('recommend', {}, '推荐已生成，24 小时投票已开启'),
-    'recommend-confirm': () => { if (run('recommend', {}, '已开始新一轮投票，旧票已清空')) closeModal(); },
+    'recommend-confirm': async () => { if (await run('recommend', {}, '已开始新一轮投票，旧票已清空')) closeModal(); },
     request: () => openModal('申请重新推荐', '<form id="request-form"><label>告诉大家为什么想换一组地点<textarea name="reason" maxlength="300" required placeholder="例如：出发地变了，希望大家的路程更均衡。"></textarea></label><button type="submit" class="button primary">提交申请</button></form>'),
     'reject-request': id => openModal('拒绝申请并说明原因', `<form id="reject-form"><input type="hidden" name="id" value="${esc(id)}"><label>原因（所有成员可见）<textarea name="reason" maxlength="300" required></textarea></label><button type="submit" class="button primary">确认拒绝</button></form>`),
     'recommend-group': value => { group = value; selectedPoi = null; render(); document.getElementById(`tab-${value}`)?.focus({ preventScroll: true }); },
-    'identity-info': () => { const info = M.access(active(), viewer()); openModal('我的演示身份', `<p class="modal-intro">${esc(self().name)} · ${self().identityType === 'account' ? '演示账号（7 天）' : '游客（24 小时）'}</p><p>未完成活动的恢复截止：${new Date(info.expiresAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</p><p class="panel-tip">从本人最近一次有效操作起算。仅查看、切换视角和自动计票不会续期。已完成的聚会手账不按此期限清理；演示身份不是真实认证。</p>`); },
+    'identity-info': () => {
+      if (profiles.activeId === 'examples') {
+        const a = active();
+        openModal('身份与示例视角', `<p class="modal-intro">小林等成员和历史活动是功能引导数据，不代表真实登录。</p>${localIdentityChoices()}<label>示例成员视角<select id="identity" aria-label="切换示例成员视角">${a.members.map(m => `<option value="${m.id}" ${m.id === viewer() ? 'selected' : ''}>${esc(m.name)}${m.id === a.hostId ? ' · 发起者' : ' · 成员'}</option>`).join('')}</select></label><p class="panel-tip">此处仅改变示例活动的演示视角。</p><button class="button light" data-action="new-profile">使用另一游客身份</button><button class="text-button" data-action="account-login">注册／登录</button>`);
+        return;
+      }
+      const a = active(), belongs = visibleActivities().some(item => item.id === a.id);
+      const renameActivity = belongs && isShared(a) ? `<details class="identity-activity"><summary>修改本活动昵称</summary><form id="rename-form" class="identity-form"><label>本活动昵称<input name="name" maxlength="16" required value="${esc(self().name)}"></label><button type="submit" class="button light">保存活动昵称</button></form></details>` : '';
+      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
+      const guestSettings = `<p class="identity-current">当前游客 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p><form id="profile-name-form" class="identity-form"><label>默认昵称<input name="name" maxlength="16" required value="${currentProfile().name === '游客' ? '' : esc(currentProfile().name)}"></label><button class="button light" type="submit">保存默认昵称</button></form><p class="identity-help">新活动会预填默认昵称，已有活动昵称不变。</p>${renameActivity}${localIdentityChoices()}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="new-profile">新建游客身份</button><button class="text-button" data-action="merge-profile">合并旧身份</button><button class="text-button" data-action="account-login">注册／登录</button></div>`;
+      openModal(isAccount() ? '我的账号' : '游客身份与设置', `<div class="identity-settings">${isAccount() ? accountSettings : guestSettings}</div>`);
+    },
+    'switch-profile': async value => { closeModal(); await selectProfile(value); },
+    'edit-avatar': () => {
+      const profile = currentProfile();
+      if (!profile) return toast('请先选择游客或登录账号');
+      openModal('修改头像', `<div class="avatar-editor"><div class="avatar-preview">${identityAvatar(profile.name, profile.id, false)}</div><form id="avatar-form"><label>选择头像图片<input name="avatar" type="file" accept="image/jpeg,image/png,image/webp" required></label><p class="identity-help">支持 JPG、PNG、WebP，不超过 2 MB。头像仅保存在此浏览器。</p><button class="button primary" type="submit">保存头像</button></form>${localAvatars[profile.id] ? '<button class="text-button" data-action="reset-avatar">恢复默认头像</button>' : ''}</div>`);
+    },
+    'reset-avatar': () => {
+      const profile = currentProfile();
+      if (!profile) return;
+      delete localAvatars[profile.id];
+      localStorage.setItem(AVATAR_KEY, JSON.stringify(localAvatars));
+      actions['edit-avatar'](); render(); toast('已恢复默认头像');
+    },
+    'account-login': () => openModal('登录账号', '<form id="account-login-form"><label>账号名称<input name="username" minlength="3" maxlength="30" required autocomplete="username"></label><label>密码<input name="password" type="password" minlength="8" required autocomplete="current-password"></label><button class="button primary full" type="submit">登录</button></form><button class="text-button" data-action="account-register">还没有账号？注册</button>'),
+    'account-register': () => openModal('注册账号', '<form id="account-register-form"><label>账号名称<input name="username" minlength="3" maxlength="30" required autocomplete="username"></label><label>密码（至少 8 位）<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><button class="button primary full" type="submit">注册并登录</button></form><button class="text-button" data-action="account-login">已有账号？登录</button>'),
+    'account-logout': async () => {
+      const previous = accountAuth?.previousProfileId;
+      try { await api('/api/account/logout', 'POST', {}, accountAuth.token); } catch { /* Local logout still clears this browser. */ }
+      for (const key of Object.keys(sharedSessions)) if (key.startsWith(`${profiles.activeId}|`)) delete sharedSessions[key];
+      profiles.list = profiles.list.filter(item => item.kind !== 'account');
+      accountAuth = null;
+      closeModal(); await selectProfile(profiles.list.some(item => item.id === previous) ? previous : 'examples');
+    },
+    'sample-journal': () => {
+      const memories = M.seedMemories();
+      openModal('示例手账 · 只读', `<p class="modal-intro">以下内容用于展示手账效果，不属于你的活动，也不会计入个人统计。</p>${memories.map(a => `<article class="panel"><img src="./assets/${['autumn', 'cafe', 'lake'].includes(a.journal.cover) ? a.journal.cover : 'autumn'}.svg" alt="${esc(a.title)}的示例封面" width="160"><h3>${esc(a.title)}</h3><p>${esc(a.date)}</p>${a.journal.feelings.map(f => `<blockquote>${esc(f.text)}</blockquote>`).join('')}${a.journal.comments.map(c => `<p>${esc(c.text)}</p>`).join('')}</article>`).join('')}`);
+    },
+    'claim-guest': async () => {
+      const guestId = accountAuth.previousProfileId;
+      let count = 0;
+      for (const [key, session] of Object.entries(sharedSessions).filter(([, s]) => s.profileId === guestId)) {
+        try { await api(`/api/activities/${sessionActivityId(key)}/claim`, 'POST', { guestToken: session.token }, accountAuth.token); delete sharedSessions[key]; count++; }
+        catch (error) { toast(error.message); }
+      }
+      closeModal(); await selectProfile(profiles.activeId); toast(`已将 ${count} 场游客活动归入账号`);
+    },
+    'new-profile': () => openModal('新游客身份', '<p class="modal-intro">新身份的活动与当前身份分开。创建或加入第一场活动时输入的昵称，会成为新身份的默认昵称。</p><button class="button primary full" data-action="create-guest-profile">创建新游客身份</button>'),
+    'create-guest-profile': async () => {
+      const profile = { id: M.uid(), name: '游客', lastActivityId: null };
+      profiles.list.push(profile);
+      closeModal(); await selectProfile(profile.id);
+    },
+    'merge-profile': () => {
+      if (isAccount() || !currentProfile()) return;
+      const others = profiles.list.filter(item => item.kind !== 'account' && item.id !== profiles.activeId);
+      if (!others.length) return toast('当前没有其他游客身份可合并');
+      openModal('合并本机游客身份', `<p class="modal-intro">把 ${esc(currentProfile().name)} 参与的活动转到另一游客身份下。仅合并本浏览器保存的活动凭证；同名也不会自动合并。</p><form id="merge-profile-form"><label>合并到<select name="target" required><option value="">选择目标游客身份</option>${others.map(item => `<option value="${esc(item.id)}">${esc(item.name)} · ${esc(item.id.slice(-4))}</option>`).join('')}</select></label><button class="button primary full" type="submit">确认合并</button></form>`);
+    },
     finish: () => confirmAction('确认这次相聚的地点？', '将按有效票数确定集合点；平票按本轮综合排名决定。确认后结果不可修改。', 'finish-confirm', '确定集合点'),
-    'finish-confirm': () => { if (run('finish', {}, '集合地点已确定，准备出发吧！')) closeModal(); },
+    'finish-confirm': async () => { if (await run('finish', {}, '集合地点已确定，准备出发吧！')) closeModal(); },
     pause: () => run('pause', {}, '活动已暂停，剩余投票时间已保留'),
     resume: () => run('resume', {}, '活动已恢复，继续原有投票时间'),
     revote: () => run('revote', {}, '已沿用候选开启新的 24 小时投票'),
     'cancel-confirm': () => confirmAction('确定取消活动？', '取消后无法恢复本次活动，但会保留活动记录。', 'cancel', '确认取消'),
-    cancel: () => { if (run('cancel', {}, '活动已取消')) closeModal(); },
-    remove: value => { if (run('remove', { id: value }, '成员已移除')) manage(); },
-    leave: () => confirmAction('退出这场活动？', '退出后，演示界面将切换为发起者视角。', 'leave-confirm', '确认退出'),
-    'leave-confirm': () => { if (run('leave', {}, '已退出活动，演示切换至发起者')) closeModal(); },
-    'open-activity': value => { state.activeId = value; state.identities[value] ||= active().hostId; selectedPoi = null; view = 'recommend'; save(); render(); },
+    cancel: async () => { if (await run('cancel', {}, '活动已取消')) closeModal(); },
+    remove: async value => { if (await run('remove', { id: value }, '成员已移除')) manage(); },
+    leave: () => confirmAction('退出这场活动？', isShared(active()) ? '退出后将失去这场共享活动的成员访问权限。' : '退出后，演示界面将切换为发起者视角。', 'leave-confirm', '确认退出'),
+    'leave-confirm': async () => { if (await run('leave', {}, '已退出活动')) closeModal(); },
+    'open-activity': async value => { if (!visibleActivities().some(a => a.id === value)) return; state.activeId = value; if (isShared(active())) await refreshShared(value, false); else state.identities[value] ||= active().hostId; if (currentProfile()) currentProfile().lastActivityId = value; selectedPoi = null; view = 'recommend'; saveProfiles(); save(); render(); },
     sample: () => { const a = M.seed(); state.activities.unshift(a); state.activeId = a.id; state.identities[a.id] = a.hostId; selectedPoi = null; view = 'recommend'; save(); render(); toast('已创建新的示例活动'); },
     copy: async () => {
       const url = new URL(location.href); url.hash = ''; url.search = ''; url.searchParams.set('invite', active().code);
-      try { await navigator.clipboard.writeText(url.href); toast('邀请链接已复制（仅同一浏览器的本地数据可用）'); }
-      catch { openModal('复制邀请链接', `<p class="modal-intro">当前浏览器不支持自动复制，请手动复制下方内容。该链接只能访问本浏览器中已有的活动。</p><label>邀请链接<input readonly value="${esc(url.href)}" onclick="this.select()"></label>`); }
+      try { await navigator.clipboard.writeText(url.href); toast(isShared(active()) ? '邀请链接已复制，可发送给其他设备' : '本机示例链接已复制，仅当前浏览器可用'); }
+      catch { openModal('复制邀请链接', `<p class="modal-intro">请手动复制下方链接。${isShared(active()) ? '其他设备可通过链接加入。' : '本机示例仅当前浏览器可用。'}</p><label>邀请链接<input readonly value="${esc(url.href)}" onclick="this.select()"></label>`); }
     },
-    about: () => openModal('关于这本相聚手账', '<p class="modal-intro">根据 neXus 团队 MeetPoint SRS V1.1 初始化的本地交互原型。</p><ul class="about-list"><li>支持三组 Top3、申请审批与原因展示、多轮投票，以及日历、照片、每人感受与留言。</li><li>右上角可切换成员，模拟不同参与者的操作。</li><li>数据保存在本浏览器；没有真实登录、服务器同步或管理员权限。</li><li>示意地图和出行时间均为模拟，未调用地图定位接口。导航按钮会打开第三方地图并传递当前示例出发地与目的地。</li><li>已实现游客 24 小时、演示账号 7 天的本地恢复检查；生产认证与隐私隔离仍需后端。照片保存在本浏览器数据库，清除网站数据会删除手账。</li></ul>')
+    about: () => openModal('关于这本相聚手账', '<p class="modal-intro">根据 neXus 团队 MeetPoint SRS V1.1 实现的演示。</p><ul class="about-list"><li>新建活动可跨设备完成邀请、需求、三组 Top3 推荐、申请审批、多轮投票与手账记录。</li><li>共享活动由服务器和 SQLite 保存；游客可在 24 小时内恢复未完成活动，登录账号可在 7 天内恢复。</li><li>旧示例活动只保存在当前浏览器。登录后的示例手账为独立只读内容，不计入个人活动。</li><li>反馈表单仍为本机演示数据；管理员流程尚未接入共享服务。</li><li>地图、路线和出行时间为模拟数据，尚未接入真实地图接口。</li><li>演示环境将登录令牌保存在本浏览器；正式部署还需要 HTTPS、访问频率限制和数据库备份。</li></ul>')
   };
   function activate(id, nextView = 'calendar') {
     state.activeId = id; state.identities[id] ||= active().hostId; selectedPoi = null; view = nextView; save();
   }
-  const journal = window.createMeetPointJournal({ M, esc, icon, avatar, getState: () => state, active, viewer, activate, replace, save, render, openModal, toast, create, statusText });
+  const journal = window.createMeetPointJournal({ M, esc, icon, avatar, getState: () => state, visibleActivities, active, viewer, activate, replace, perform, isShared, uploadSharedPhoto, sharedPhotoUrl, forgetSharedPhoto, save, render, openModal, toast, create, statusText });
   Object.assign(actions, journal.actions);
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-action]');
@@ -467,7 +735,7 @@
   document.addEventListener('change', async event => {
     try {
       await journal.change(event.target);
-      if (event.target.id === 'identity') { state.identities[active().id] = event.target.value; selectedPoi = null; save(); render(); $('#identity')?.focus({ preventScroll: true }); toast(`已切换到 ${self().name} 的演示视角`); }
+      if (event.target.id === 'identity' && profiles.activeId === 'examples') { state.identities[active().id] = event.target.value; selectedPoi = null; save(); render(); $('#identity')?.focus({ preventScroll: true }); toast(`已切换到 ${self().name} 的演示视角`); }
     } catch (error) { toast(error.message); }
   });
   document.addEventListener('submit', async event => {
@@ -477,26 +745,83 @@
     const data = new FormData(form);
     try {
       if (form.getAttribute('id') === 'request-form') {
-        if (run('request', { reason: data.get('reason') }, '申请已提交，处理状态对所有成员可见')) closeModal();
+        if (await run('request', { reason: data.get('reason') }, '申请已提交，处理状态对所有成员可见')) closeModal();
       } else if (form.getAttribute('id') === 'reject-form') {
-        if (run('reject-request', { id: data.get('id'), reason: data.get('reason') }, '已拒绝申请并公开原因')) closeModal();
+        if (await run('reject-request', { id: data.get('id'), reason: data.get('reason') }, '已拒绝申请并公开原因')) closeModal();
       } else if (form.getAttribute('id') === 'schedule-form') {
-        if (run('schedule', { date: data.get('date'), time: data.get('time') }, '日历安排已更新')) closeModal();
+        if (await run('schedule', { date: data.get('date'), time: data.get('time') }, '日历安排已更新')) closeModal();
       } else if (form.getAttribute('id') === 'create-form') {
-        const a = M.createActivity(data.get('title'), data.get('nickname'), data.get('type'), Date.now(), { date: data.get('date'), time: data.get('time'), identityType: data.get('identityType') });
+        const result = await api('/api/activities', 'POST', { title: data.get('title'), nickname: data.get('nickname'), type: data.get('type'), date: data.get('date'), time: data.get('time') }, isAccount() ? accountAuth.token : null);
+        attachToProfile(result.activity, result.token);
+        const a = acceptShared(result);
         journal.setDate(a.date);
-        state.activities.unshift(a); state.activeId = a.id; state.identities[a.id] = a.hostId;
+        state.activeId = a.id;
         selectedPoi = null; view = 'recommend'; save(); closeModal(); render(); invite();
       } else if (form.getAttribute('id') === 'join-form') {
-        const a = state.activities.find(a => a.code === data.get('code').trim().toUpperCase());
-        if (!a) throw new Error('未在本浏览器找到该活动，请检查邀请码');
-        const updated = M.act(a, null, 'join', { name: data.get('nickname'), identityType: data.get('identityType') });
-        replace(updated); state.activeId = a.id; state.identities[a.id] = updated.members.at(-1).id;
-        selectedPoi = null; view = 'recommend'; save(); closeModal(); render(); requirements();
+        const result = await api('/api/activities/join', 'POST', { code: data.get('code'), nickname: data.get('nickname') }, isAccount() ? accountAuth.token : null);
+        attachToProfile(result.activity, result.token);
+        const a = acceptShared(result);
+        state.activeId = a.id;
+        selectedPoi = null; view = 'recommend'; save();
+        const url = new URL(location.href);
+        url.searchParams.delete('invite');
+        history.replaceState(null, '', url);
+        closeModal(); render(); requirements();
       } else if (form.getAttribute('id') === 'requirements-form') {
-        if (run('requirements', { originIndex: Number(data.get('originIndex')), mode: data.get('mode'), preference: data.get('preference'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+        if (await run('requirements', { originIndex: Number(data.get('originIndex')), mode: data.get('mode'), preference: data.get('preference'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+      } else if (form.getAttribute('id') === 'rename-form') {
+        if (await run('rename', { name: data.get('name') }, '昵称已更新')) {
+          sessionFor(active().id).name = self().name;
+          saveProfiles(); closeModal(); render();
+        }
+      } else if (form.getAttribute('id') === 'profile-name-form') {
+        if (isAccount() || !currentProfile()) throw new Error('请先切换到游客身份');
+        const name = String(data.get('name') || '').trim();
+        if (!name || name.length > 16) throw new Error('默认昵称应为 1—16 个字');
+        currentProfile().name = name;
+        saveProfiles(); closeModal(); render(); toast('默认昵称已更新');
+      } else if (form.getAttribute('id') === 'avatar-form') {
+        const profile = currentProfile(), file = data.get('avatar');
+        if (!profile || !(file instanceof File) || !file.size) throw new Error('请选择头像图片');
+        if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 2 * 1024 * 1024) throw new Error('请选择不超过 2 MB 的 JPG、PNG 或 WebP 图片');
+        const source = URL.createObjectURL(file);
+        let image;
+        try {
+          image = new Image(); image.src = source;
+          await image.decode();
+          if (!image.naturalWidth || image.naturalWidth * image.naturalHeight > 40_000_000) throw new Error('图片尺寸过大，请先缩小');
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 160;
+          const side = Math.min(image.naturalWidth, image.naturalHeight);
+          canvas.getContext('2d').drawImage(image, (image.naturalWidth - side) / 2, (image.naturalHeight - side) / 2, side, side, 0, 0, 160, 160);
+          localAvatars[profile.id] = canvas.toDataURL('image/jpeg', .82);
+          localStorage.setItem(AVATAR_KEY, JSON.stringify(localAvatars));
+        } finally { URL.revokeObjectURL(source); }
+        closeModal(); render(); toast('头像已保存到本浏览器');
+      } else if (form.getAttribute('id') === 'merge-profile-form') {
+        const source = currentProfile();
+        const target = profiles.list.find(item => item.id === data.get('target') && item.kind !== 'account');
+        if (!source || source.kind === 'account' || !target || source.id === target.id) throw new Error('请选择另一个游客身份');
+        const sessions = Object.entries(sharedSessions).filter(([, session]) => session.profileId === source.id);
+        if (sessions.some(([key]) => sharedSessions[sessionKey(target.id, sessionActivityId(key))]))
+          throw new Error('两个游客身份参与了同一活动，不能自动合并');
+        for (const [key, session] of sessions) {
+          sharedSessions[sessionKey(target.id, sessionActivityId(key))] = { ...session, profileId: target.id };
+          delete sharedSessions[key];
+        }
+        target.lastActivityId = source.lastActivityId || target.lastActivityId;
+        profiles.list = profiles.list.filter(item => item.id !== source.id);
+        if (accountAuth?.previousProfileId === source.id) accountAuth.previousProfileId = target.id;
+        closeModal(); await selectProfile(target.id); toast(`活动已归入 ${target.name}`);
+      } else if (['account-login-form', 'account-register-form'].includes(form.getAttribute('id'))) {
+        const route = form.getAttribute('id') === 'account-register-form' ? 'register' : 'login';
+        const result = await api(`/api/account/${route}`, 'POST', { username: data.get('username'), password: data.get('password') });
+        const previousProfileId = isAccount() ? accountAuth.previousProfileId : profiles.activeId;
+        accountAuth = { ...result.account, token: result.token, previousProfileId };
+        const id = `account:${result.account.id}`;
+        if (!profiles.list.some(item => item.id === id)) profiles.list.push({ id, name: result.account.username, kind: 'account', lastActivityId: null });
+        closeModal(); await selectProfile(id); toast('账号已登录');
       } else if (form.getAttribute('id') === 'transfer-form') {
-        if (run('transfer', { id: data.get('id') }, '权限已移交，你现在是普通成员')) closeModal();
+        if (await run('transfer', { id: data.get('id') }, '权限已移交，你现在是普通成员')) closeModal();
       } else if (form.getAttribute('id') === 'feedback-form') {
         const content = data.get('content').trim();
         if (!content) throw new Error('请填写反馈内容');
@@ -509,7 +834,7 @@
   window.addEventListener('storage', event => { if (event.key === STORAGE_KEY) { state = load(); closeModal(); render(); } });
   function synchronizeTime() {
     let changed = false;
-    state.activities = state.activities.map(a => { const next = M.tick(a); if (next.status !== a.status) changed = true; return next; });
+    state.activities = state.activities.map(a => { if (isShared(a)) return a; const next = M.tick(a); if (next.status !== a.status) changed = true; return next; });
     const accessNow = canAccess();
     if (lastAccessState !== null && accessNow !== lastAccessState) {
       if (!accessNow) closeModal();
@@ -522,8 +847,40 @@
   try { save(); } catch (error) { storageWarning = error.message; }
   synchronizeTime(); render();
   setInterval(synchronizeTime, 1000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) synchronizeTime(); });
-  const invitation = new URL(location.href).searchParams.get('invite');
-  if (invitation) join(invitation.slice(0, 6));
+  setInterval(() => { if (!document.hidden && !$('#modal').open && isShared(active())) refreshShared().catch(error => toast(error.message)); }, 5000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { synchronizeTime(); if (isShared(active())) refreshShared().catch(error => toast(error.message)); } });
+  const invitation = new URL(location.href).searchParams.get('invite')?.trim().slice(0, 6).toUpperCase();
   if (storageWarning) toast(storageWarning);
+  restoreProfile().then(results => {
+    const invited = invitation && state.activities.find(a => isShared(a) && a.code === invitation);
+    const mine = visibleActivities();
+    const previous = mine.find(a => a.id === state.activeId);
+    const preferred = mine.find(a => a.id === currentProfile()?.lastActivityId);
+    const target = invited || (!invitation && profiles.activeId !== 'examples' && (previous || preferred || mine[0]));
+    if (target) {
+      state.activeId = target.id;
+      selectedPoi = null;
+      view = 'recommend';
+      save();
+      saveProfiles();
+    } else if (profiles.activeId !== 'examples') {
+      view = 'overview';
+    }
+    if (results.some(result => result.status === 'rejected')) toast('部分共享活动暂时无法恢复，请检查服务或身份期限');
+    render();
+    if (invitation && !invited) join(invitation);
+    if (invited) {
+      const url = new URL(location.href);
+      url.searchParams.delete('invite');
+      history.replaceState(null, '', url);
+    }
+  }).catch(async error => {
+    if (isAccount() && error.status === 401) {
+      for (const key of Object.keys(sharedSessions)) if (key.startsWith(`${profiles.activeId}|`)) delete sharedSessions[key];
+      profiles.list = profiles.list.filter(item => item.kind !== 'account');
+      accountAuth = null;
+      await selectProfile('examples');
+      toast('账号登录已过期，请重新登录');
+    } else toast(error.message);
+  });
 })();

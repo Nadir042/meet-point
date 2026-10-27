@@ -165,8 +165,35 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #a6
 .top-nav-item.active{color:var(--green-dark);border-color:var(--green);font-weight:650}
 .top-nav-item:hover{background:var(--surface-soft)}
 .header-account .identity-kind{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:6px;background:var(--surface-soft)}
+.header-account .identity-kind{display:inline-flex;align-items:center;gap:8px;max-width:190px;padding:5px 8px}
+.header-account .identity-kind>span:last-child{overflow:hidden;text-overflow:ellipsis}
+.header-account .avatar img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.identity-settings{display:grid;gap:16px}
+.identity-current{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0;color:var(--muted);font-size:14px}
+.identity-current strong{color:var(--ink);font-size:16px}
+.identity-current span{width:100%;font-size:12px}
+.identity-form{gap:10px}
+.identity-form .button{align-self:flex-start}
+.identity-help{margin:-10px 0 0;color:var(--muted);font-size:12px;line-height:1.6}
+.identity-choices,.identity-activity{margin:0;border-top:1px solid var(--line);padding-top:14px}
+.identity-choices summary,.identity-activity summary{cursor:pointer;color:var(--green-dark);font-size:14px;font-weight:600}
+.identity-choices>div{display:flex;flex-wrap:wrap;gap:8px;margin-top:13px}
+.identity-choices .panel-tip{margin:10px 0 0}
+.identity-activity .identity-form{margin-top:13px}
+.identity-choices .button[aria-current="true"]{font-weight:700;opacity:1}
+.identity-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px 16px;padding-top:14px;border-top:1px solid var(--line)}
+.avatar-editor{display:grid;gap:16px}
+.avatar-preview{display:flex;justify-content:center}
+.avatar-preview .avatar{width:88px;height:88px;font-size:32px;border-radius:50%}
+.avatar-preview .avatar img{display:block;width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.avatar-editor form{gap:12px}
+.avatar-editor form .button{align-self:flex-start}
+.avatar-editor .identity-help{margin:0}
+.avatar-editor>.text-button{justify-self:start}
 .header-account .identity select{color:var(--ink);font-size:13px}
 .menu-toggle{font-size:13px}
+@media(max-width:1200px){.header-account .identity-kind{display:inline-flex}}
+@media(max-width:700px){.header-account .identity-kind{display:inline-flex;max-width:132px;font-size:11px}}
 .avatar{background:#e7eddf;color:#506644}
 .avatar-1{background:#f2e9d9;color:#816544}.avatar-2{background:#efe3de;color:#865f51}.avatar-3{background:#e0ebea;color:#496d69}.avatar-4{background:#e9e4ef;color:#6e5e81}
 .status,.count-badge,.host-tag{background:var(--green-soft);color:var(--green-dark);border-color:#d9e2d1;border-radius:5px;font-size:12px}

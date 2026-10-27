@@ -34,12 +34,24 @@ test('a single member or incomplete requirements blocks recommendations', () => 
   a = M.act(a, null, 'join', { name: '伙伴' }, NOW);
   assert.throws(() => M.act(a, a.hostId, 'recommend', {}, NOW), /需求/);
 });
-test('activity is capped at ten members and duplicate names are rejected', () => {
+test('activity is capped at ten members and repeated names get local suffixes', () => {
   let a = prepared();
-  assert.throws(() => M.act(a, null, 'join', { name: '参与者' }, NOW), /昵称/);
-  for (let i = 2; i < 10; i++) a = M.act(a, null, 'join', { name: `成员${i}` }, NOW);
+  a = M.act(a, null, 'join', { name: '参与者' }, NOW);
+  assert.equal(a.members.at(-1).name, '参与者（2）');
+  a = M.act(a, null, 'join', { name: '参与者' }, NOW);
+  assert.equal(a.members.at(-1).name, '参与者（3）');
+  for (let i = 4; i < 10; i++) a = M.act(a, null, 'join', { name: `成员${i}` }, NOW);
   assert.equal(a.members.length, 10);
   assert.throws(() => M.act(a, null, 'join', { name: '第十一人' }, NOW), /10/);
+});
+test('members can rename themselves without changing identity or taking another name', () => {
+  let a = prepared();
+  const memberId = a.members[1].id;
+  a = M.act(a, memberId, 'rename', { name: '发起人' }, NOW);
+  assert.equal(a.members[1].name, '发起人（2）');
+  assert.equal(a.members[1].id, memberId);
+  assert.equal(a.hostId, a.members[0].id);
+  assert.throws(() => M.act(a, memberId, 'rename', { name: '' }, NOW), /昵称/);
 });
 test('changing a vote replaces the previous vote, it does not add one', () => {
   let a = seeded();
@@ -108,7 +120,7 @@ test('zero votes at deadline produces no result; revote starts a fresh 24 hours'
 test('requirements never mutate a voting snapshot; approved refresh clears all old votes', () => {
   let a = seeded();
   const original = JSON.stringify(a.candidates);
-  a = M.act(a, a.members[1].id, 'requirements', { originIndex: 6, mode: '步行', preference: '火锅', budget: 80, shared: false }, NOW);
+  a = M.act(a, a.members[1].id, 'requirements', { originIndex: 6, mode: '步行', preference: '聚餐', budget: 80, shared: false }, NOW);
   assert.equal(JSON.stringify(a.candidates), original);
   a = M.act(a, a.members[1].id, 'request', {}, NOW);
   assert.equal(a.requests.length, 1);

@@ -1,13 +1,13 @@
 {
   "name": "meetpoint-demo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "MeetPoint 多人出行集合点推荐系统 — SRS V1.1 本地交互 Demo",
+  "description": "MeetPoint 多人出行集合点推荐系统 — Sprint 1 多人共享流程",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node --test tests/core.test.js",
-    "check": "node --check core.js && node --check app.js && node --check journal.js && node --check media.js && node --check server.js"
+    "test": "node --test tests/*.test.js",
+    "check": "node --check core.js && node --check app.js && node --check journal.js && node --check media.js && node --check shared-store.js && node --check server.js"
   },
-  "engines": { "node": ">=18" }
+  "engines": { "node": ">=22.13" }
 }
