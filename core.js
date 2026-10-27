@@ -4,7 +4,7 @@
   const DAY = 24 * 60 * 60 * 1000;
   const GROUPS = [
     { id: 'fairness', name: '最公平', description: '尽量缩小伙伴之间的出行时间差，让每个人都少一点奔波。' },
-    { id: 'preference', name: '最合口味', description: '优先照顾活动类型、个人偏好与预算期待。' },
+    { id: 'preference', name: '最合心意', description: '优先照顾活动类型、个人偏好与预算期待。' },
     { id: 'convenience', name: '最方便', description: '优先交通便利，再比较全员平均出行时间。' }
   ];
   const dateKey = (now = Date.now()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(now));
@@ -24,23 +24,33 @@
     { name: '五角场', lng: 121.5148, lat: 31.3013 }
   ];
   const POIS = [
-    { id: 'p1', name: '新天地', subtitle: '街区漫步，也适合坐下来好好聊聊', area: '黄浦区 · 太仓路', lng: 121.4752, lat: 31.2194, tags: ['聚餐', '线下会面'], preference: ['本帮菜', '不限', '朋友会面'], budget: 100, transit: 9.2, illustration: 'town', line: '地铁 10 / 13 号线', x: 57, y: 67 },
-    { id: 'p2', name: '静安嘉里中心', subtitle: '丰富餐饮选择，地铁出站轻松抵达', area: '静安区 · 南京西路', lng: 121.4505, lat: 31.2237, tags: ['聚餐', '线下会面'], preference: ['西餐', '不限', '工作交流'], budget: 130, transit: 9.7, illustration: 'building', line: '地铁 2 / 7 / 14 号线', x: 32, y: 43 },
-    { id: 'p3', name: '上海来福士广场', subtitle: '城市中心的相聚日常', area: '黄浦区 · 西藏中路', lng: 121.4753, lat: 31.2322, tags: ['聚餐', '休闲娱乐', '线下会面'], preference: ['火锅', '不限', '朋友会面', '逛街'], budget: 90, transit: 9.6, illustration: 'mall', line: '地铁 1 / 2 / 8 号线', x: 58, y: 33 },
-    { id: 'p4', name: '上海环球港', subtitle: '把吃饭、逛街和休闲安排在一起', area: '普陀区 · 中山北路', lng: 121.4127, lat: 31.2328, tags: ['休闲娱乐', '聚餐'], preference: ['逛街', '不限', '西餐'], budget: 100, transit: 8.8, illustration: 'mall', line: '地铁 3 / 4 / 13 号线', x: 16, y: 27 },
-    { id: 'p5', name: '上海图书馆（淮海路馆）', subtitle: '留一段安静的时间给阅读与思考', area: '徐汇区 · 淮海中路', lng: 121.4431, lat: 31.2074, tags: ['线下会面'], preference: ['学习讨论', '不限'], budget: 0, transit: 8.9, illustration: 'building', line: '地铁 10 号线', x: 25, y: 73 },
-    { id: 'p6', name: '世纪公园', subtitle: '在开阔的绿意里，开启一场轻松会面', area: '浦东新区 · 锦绣路', lng: 121.5501, lat: 31.2157, tags: ['休闲娱乐'], preference: ['户外散步', '不限'], budget: 0, transit: 8.6, illustration: 'park', line: '地铁 2 / 18 号线', x: 85, y: 65 }
+    { id: 'p1', name: '新天地', subtitle: '街区漫步，也适合坐下来好好聊聊', area: '黄浦区 · 太仓路', lng: 121.4752, lat: 31.2194, tags: ['聚餐', '线下会面'], preference: ['聚餐', '逛街', '不限'], budget: 100, transit: 9.2, illustration: 'town', line: '地铁 10 / 13 号线', x: 57, y: 67 },
+    { id: 'p2', name: '静安嘉里中心', subtitle: '丰富餐饮选择，地铁出站轻松抵达', area: '静安区 · 南京西路', lng: 121.4505, lat: 31.2237, tags: ['聚餐', '线下会面'], preference: ['聚餐', '逛街', '不限'], budget: 130, transit: 9.7, illustration: 'building', line: '地铁 2 / 7 / 14 号线', x: 32, y: 43 },
+    { id: 'p3', name: '上海来福士广场', subtitle: '城市中心的相聚日常', area: '黄浦区 · 西藏中路', lng: 121.4753, lat: 31.2322, tags: ['聚餐', '休闲娱乐', '线下会面'], preference: ['聚餐', '逛街', '不限'], budget: 90, transit: 9.6, illustration: 'mall', line: '地铁 1 / 2 / 8 号线', x: 58, y: 33 },
+    { id: 'p4', name: '上海环球港', subtitle: '把吃饭、逛街和休闲安排在一起', area: '普陀区 · 中山北路', lng: 121.4127, lat: 31.2328, tags: ['休闲娱乐', '聚餐'], preference: ['聚餐', '逛街', '不限'], budget: 100, transit: 8.8, illustration: 'mall', line: '地铁 3 / 4 / 13 号线', x: 16, y: 27 },
+    { id: 'p5', name: '上海图书馆（淮海路馆）', subtitle: '留一段安静的时间给阅读与思考', area: '徐汇区 · 淮海中路', lng: 121.4431, lat: 31.2074, tags: ['线下会面'], preference: ['不限'], budget: 0, transit: 8.9, illustration: 'building', line: '地铁 10 号线', x: 25, y: 73 },
+    { id: 'p6', name: '世纪公园', subtitle: '在开阔的绿意里，开启一场轻松会面', area: '浦东新区 · 锦绣路', lng: 121.5501, lat: 31.2157, tags: ['休闲娱乐'], preference: ['赏风景', '不限'], budget: 0, transit: 8.6, illustration: 'park', line: '地铁 2 / 18 号线', x: 85, y: 65 }
   ];
-  const OPTIONS = {
-    '聚餐': ['不限', '本帮菜', '火锅', '西餐'],
-    '休闲娱乐': ['不限', '逛街', '户外散步'],
-    '线下会面': ['不限', '学习讨论', '工作交流', '朋友会面']
-  };
+  const PREFERENCES = ['不限', '聚餐', '逛街', '赏风景'];
+  const OPTIONS = Object.fromEntries(['聚餐', '休闲娱乐', '线下会面'].map(type => [type, PREFERENCES]));
+  const oldPreference = value => ({ '本帮菜': '聚餐', '火锅': '聚餐', '西餐': '聚餐', '户外散步': '赏风景', '学习讨论': '不限', '工作交流': '不限', '朋友会面': '不限' })[value] || value;
   const clone = value => JSON.parse(JSON.stringify(value));
   const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const round = n => Math.round(n * 10) / 10;
   const clamp = n => Math.max(0, Math.min(10, n));
   function assert(condition, message) { if (!condition) throw new Error(message); }
+  function availableName(a, requested, actorId = null) {
+    assert(typeof requested === 'string', '请输入昵称');
+    const base = requested.trim();
+    assert(base && base.length <= 16, '昵称应为 1—16 个字');
+    const names = new Set(a.members.filter(m => m.id !== actorId).map(m => m.name));
+    if (!names.has(base)) return base;
+    for (let number = 2; ; number++) {
+      const suffix = `（${number}）`;
+      const candidate = base.slice(0, 16 - suffix.length) + suffix;
+      if (!names.has(candidate)) return candidate;
+    }
+  }
   function member(name, originIndex = null, mode = '公共交通', preference = '不限', budget = 150, shared = false) {
     return { id: uid(), name, origin: originIndex === null ? null : clone(ORIGINS[originIndex]), mode, preference, budget, shared };
   }
@@ -108,6 +118,7 @@
   }
   function migrate(activity) {
     const a = clone(activity);
+    a.members.forEach(m => { m.preference = oldPreference(m.preference); });
     a.date ||= dateKey(a.createdAt);
     a.time ||= '18:30';
     a.journal ||= emptyJournal();
@@ -185,6 +196,12 @@
     const actor = a.members.find(m => m.id === actorId);
     if (action !== 'join') assert(actor, '当前身份不在活动中');
     if (actor) assert(access(a, actorId, now).allowed, '该身份的活动恢复期限已过，不能继续访问未完成活动');
+    if (action === 'rename') {
+      assert(a.status !== 'cancelled', '活动已取消，不能修改昵称');
+      actor.name = availableName(a, data.name, actorId);
+      actor.lastActiveAt = a.updatedAt = now;
+      return a;
+    }
     if (['feeling', 'comment', 'photos', 'delete-photo', 'delete-comment'].includes(action)) return journalAct(a, actor, action, data, now);
     assert(!['completed', 'cancelled'].includes(a.status), '活动已结束，不能再修改');
     const host = () => assert(actorId === a.hostId, '只有发起者可以执行此操作');
@@ -207,9 +224,8 @@
         case 'join': {
           assert(a.status !== 'voting', '投票期间不能加入成员');
           assert(a.members.length < 10, '活动最多支持 10 人');
-          assert(data.name?.trim(), '请输入昵称');
-          assert(!a.members.some(m => m.name === data.name.trim()), '昵称已被使用，请换一个昵称');
-          a.members.push({ ...member(data.name.trim().slice(0, 16)), identityType: data.identityType === 'account' ? 'account' : 'guest', lastActiveAt: now });
+          assert(typeof data.name === 'string', '请输入昵称');
+          a.members.push({ ...member(availableName(a, data.name)), identityType: data.identityType === 'account' ? 'account' : 'guest', lastActiveAt: now });
           break;
         }
         case 'remove':
@@ -292,9 +308,9 @@
   function seed(now = Date.now()) {
     let a = createActivity('周末见面，一起吃顿好的', '小林', '聚餐', now);
     const host = a.members[0];
-    Object.assign(host, member('小林', 0, '公共交通', '本帮菜', 150, true), { id: host.id });
+    Object.assign(host, member('小林', 0, '公共交通', '聚餐', 150, true), { id: host.id });
     a.members.push(member('阿泽', 1, '骑行', '不限', 150, true));
-    a.members.push(member('可可', 2, '公共交通', '西餐', 120, false));
+    a.members.push(member('可可', 2, '公共交通', '聚餐', 120, false));
     a.members.push(member('一诺', 3, '公共交通', '不限', 120, false));
     a.members.forEach(m => { m.lastActiveAt = now; m.identityType = 'account'; });
     a = act(a, a.hostId, 'recommend', {}, now);

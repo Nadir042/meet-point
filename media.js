@@ -50,7 +50,7 @@
     const result = URL.createObjectURL(blob); urls.set(id, result); return result;
   }
   async function hydrate(container = document) {
-    for (const img of container.querySelectorAll('img[data-photo]')) {
+    for (const img of container.querySelectorAll('img[data-photo]:not([data-remote-photo])')) {
       try {
         const source = await url(img.dataset.photo);
         if (!img.isConnected) continue;
