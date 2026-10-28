@@ -13,6 +13,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
   fs.mkdirSync(path.dirname(filename), { recursive: true });
   const db = new DatabaseSync(filename);
   db.exec(`PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS activities (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
     );
@@ -34,6 +35,8 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       account_id TEXT NOT NULL, activity_id TEXT NOT NULL, member_id TEXT NOT NULL,
       PRIMARY KEY(account_id, activity_id), UNIQUE(activity_id, member_id)
     );`);
+  if (db.prepare('PRAGMA foreign_keys').get().foreign_keys !== 1)
+    throw new Error('SQLite 外键约束未启用');
   const findByCode = db.prepare('SELECT payload FROM activities WHERE code = ?');
   const findById = db.prepare('SELECT payload FROM activities WHERE id = ?');
   const insert = db.prepare('INSERT INTO activities (id, code, payload) VALUES (?, ?, ?)');
