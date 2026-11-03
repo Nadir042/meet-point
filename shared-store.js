@@ -194,7 +194,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
         const a = M.act(activity, memberId, 'requirements', {
-          originIndex: input.originIndex, mode: input.mode,
+          origin: input.origin, mode: input.mode,
           preference: input.preference, budget: input.budget, shared: input.shared === true
         });
         update.run(JSON.stringify(a), id);

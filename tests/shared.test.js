@@ -8,6 +8,7 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { createServer } = require('../server');
 const { openStore } = require('../shared-store');
+const M = require('../core');
 
 test('two independent clients complete the shared activity flow', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-shared-'));
@@ -43,18 +44,22 @@ test('two independent clients complete the shared activity flow', async () => {
     const joined = await request('/api/activities/join', 'POST', { code, nickname: '小陈' });
     assert.equal(joined.status, 201);
     assert.equal(joined.body.activity.members.length, 2);
-    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { originIndex: 2, mode: '公共交通', preference: '聚餐', budget: 100, shared: false }, joined.body.token);
+    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: M.ORIGINS[2], mode: '公共交通', preference: '聚餐', budget: 100, shared: false }, joined.body.token);
     assert.equal(saved.status, 200);
     assert.equal(saved.body.activity.members[1].origin.name, '人民广场');
     const hostView = await request(`/api/activities/${id}`, 'GET', null, created.body.token);
     assert.equal(hostView.body.activity.members[1].ready, true);
     assert.equal(hostView.body.activity.members[1].origin, null, 'private origin is hidden from other members');
     assert.equal(hostView.body.activity.members[1].preference, '聚餐');
-    const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { originIndex: 0, mode: '公共交通', preference: '不限', budget: 150, shared: true }, created.body.token);
+    const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: M.ORIGINS[0], mode: '公共交通', preference: '不限', budget: 150, shared: true }, created.body.token);
     assert.equal(hostReady.body.activity.requirementsReady, true);
     const recommended = await request(`/api/activities/${id}/actions`, 'POST', { action: 'recommend' }, created.body.token);
     assert.equal(recommended.body.activity.status, 'voting');
     assert.ok(recommended.body.activity.candidates.length > 0);
+    assert.equal(Object.hasOwn(recommended.body.activity, 'resultId'), false);
+    assert.equal(Object.hasOwn(recommended.body.activity, 'remaining'), false);
+    assert.ok(recommended.body.activity.candidates.every(candidate => Object.hasOwn(candidate.dimensions, 'convenience')));
+    assert.ok(recommended.body.activity.candidates.every(candidate => !Object.hasOwn(candidate.dimensions, 'transit')));
     const place = recommended.body.activity.candidates[0].id;
     const voted = await request(`/api/activities/${id}/actions`, 'POST', { action: 'vote', data: { id: place } }, joined.body.token);
     assert.equal(voted.body.activity.votes[joined.body.activity.viewerId], place);
@@ -70,7 +75,7 @@ test('two independent clients complete the shared activity flow', async () => {
     assert.equal(photo.headers.get('content-type'), 'image/png');
     assert.equal((await request(`/api/activities/${id}/actions`, 'POST', { action: 'delete-photo', data: { id: photoId } }, created.body.token)).status, 400);
     assert.equal((await request(`/api/activities/${id}`, 'GET')).status, 401);
-    assert.equal((await request(`/api/activities/${id}/requirements`, 'PUT', { originIndex: 0, mode: '步行', preference: '不限', budget: 0 }, 'invalid')).status, 401);
+    assert.equal((await request(`/api/activities/${id}/requirements`, 'PUT', { origin: M.ORIGINS[0], mode: '步行', preference: '不限', budget: 0 }, 'invalid')).status, 401);
     const repeat = await request('/api/activities/join', 'POST', { code, nickname: '小陈' });
     assert.equal(repeat.status, 400, 'voting still prevents joining');
     const names = await request('/api/activities', 'POST', { title: '重名测试', nickname: '小陈', type: '聚餐', date: '2026-10-29', time: '18:30' });

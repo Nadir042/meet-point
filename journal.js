@@ -52,7 +52,7 @@ window.createMeetPointJournal = function (ctx) {
     if (!a || !allowed(a)) return toast('该身份已超过未完成活动的恢复期限');
     activate(a.id, 'calendar'); selectedDate = a.date; month = a.date.slice(0, 7); render();
     const current = viewer(), mine = a.journal.feelings.find(f => f.memberId === current);
-    const locked = a.status === 'cancelled', location = a.candidates.find(p => p.id === a.resultId)?.name || '地点还在商量中';
+    const locked = a.status === 'cancelled', location = a.candidates.find(p => p.id === a.winningCandidateId)?.name || '地点还在商量中';
     openModal('这一页，属于我们', `<article class="journal-detail" data-journal-id="${a.id}"><div class="journal-detail-head"><span class="eyebrow">${esc(a.date.replaceAll('-', '.'))} / ${esc(a.time)} ${a.isExample ? '· 示例活动' : ''}</span><h2>${esc(a.title)}</h2><p>${icon('pin')} ${esc(location)} <span class="status">${statusText(a)}</span></p></div>
       <div class="journal-participants"><span>这天的伙伴</span><div>${a.members.map((m, i) => `<span>${avatar(m, i, true)}${esc(m.name)}</span>`).join('')}</div></div>
       <div class="journal-identity-row"><label>以谁的身份记录<select id="journal-identity" aria-label="切换手账成员" ${isShared(a) ? 'disabled' : ''}>${(isShared(a) ? a.members.filter(m => m.id === current) : a.members).map(m => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${esc(m.name)}${m.id === a.hostId ? ' · 发起者' : ''}</option>`).join('')}</select></label><button class="text-button" data-action="journal-planning" data-value="${a.id}">查看活动与推荐 ${icon('arrow')}</button></div>

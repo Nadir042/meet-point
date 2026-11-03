@@ -66,7 +66,8 @@
       id: uid(), code: uid().replace(/-/g, '').slice(-6).toUpperCase(),
       title: title.trim().slice(0, 40), type, hostId: host.id, members: [host],
       status: 'collecting', paused: false, candidates: [], votes: {}, round: 0,
-      deadline: null, remaining: null, resultId: null, requests: [], createdAt: now, updatedAt: now,
+      deadline: null, remainingMs: null, winningCandidateId: null,
+      requests: [], createdAt: now, updatedAt: now,
       date: options.date || dateKey(now), time: options.time || '18:30', groups: {}, journal: emptyJournal()
     };
   }
@@ -96,10 +97,10 @@
         fairness: round(clamp(10 - gap / 8)),
         time: round(clamp(10 - average / 12)),
         preference: round(match),
-        transit: p.transit
+        convenience: p.transit
       };
-      // No contractual weighting was agreed. An explicit demo-only equal mean provides a stable tie order.
-      const score = round((dimensions.fairness + dimensions.time + dimensions.preference + dimensions.transit) / 4);
+      // The four scoring dimensions use the agreed equal weighting.
+      const score = round((dimensions.fairness + dimensions.time + dimensions.preference + dimensions.convenience) / 4);
       return { ...clone(p), routes, average, gap, dimensions, score };
     }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   }
@@ -107,7 +108,7 @@
     const compare = {
       fairness: (a, b) => b.dimensions.fairness - a.dimensions.fairness || a.average - b.average,
       preference: (a, b) => b.dimensions.preference - a.dimensions.preference || b.score - a.score,
-      convenience: (a, b) => b.dimensions.transit - a.dimensions.transit || a.average - b.average
+      convenience: (a, b) => b.dimensions.convenience - a.dimensions.convenience || a.average - b.average
     };
     return Object.fromEntries(GROUPS.map(g => [g.id, [...pool].sort((a, b) => compare[g.id](a, b) || a.id.localeCompare(b.id)).slice(0, 3).map(p => p.id)]));
   }
@@ -118,6 +119,17 @@
   }
   function migrate(activity) {
     const a = clone(activity);
+    if (!Object.hasOwn(a, 'remainingMs')) a.remainingMs = a.remaining ?? null;
+    if (!Object.hasOwn(a, 'winningCandidateId')) a.winningCandidateId = a.resultId ?? null;
+    delete a.remaining;
+    delete a.resultId;
+    a.candidates = (a.candidates || []).map(candidate => {
+      if (candidate.dimensions && !Object.hasOwn(candidate.dimensions, 'convenience')) {
+        candidate.dimensions.convenience = candidate.dimensions.transit;
+      }
+      if (candidate.dimensions) delete candidate.dimensions.transit;
+      return candidate;
+    });
     a.members.forEach(m => { m.preference = oldPreference(m.preference); });
     a.date ||= dateKey(a.createdAt);
     a.time ||= '18:30';
@@ -175,7 +187,7 @@
     const total = Object.values(counts).reduce((s, n) => s + n, 0);
     if (!total) { a.status = 'no-votes'; a.deadline = null; return; }
     const winner = a.candidates.reduce((best, p) => counts[p.id] > counts[best.id] ? p : best, a.candidates[0]);
-    a.resultId = winner.id;
+    a.winningCandidateId = winner.id;
     a.status = 'completed';
     a.deadline = null;
   }
@@ -189,7 +201,7 @@
     a.status = 'voting';
     a.votes = {};
     a.deadline = now + DAY;
-    a.remaining = null;
+    a.remainingMs = null;
   }
   function act(activity, actorId, action, data = {}, now = Date.now()) {
     const a = migrate(tick(activity, now));
@@ -207,11 +219,11 @@
     const host = () => assert(actorId === a.hostId, '只有发起者可以执行此操作');
     if (action === 'resume') {
       host(); assert(a.paused, '活动没有暂停');
-      if (a.status === 'voting') a.deadline = now + a.remaining;
-      a.paused = false; a.remaining = null;
+      if (a.status === 'voting') a.deadline = now + a.remainingMs;
+      a.paused = false; a.remainingMs = null;
     } else if (action === 'pause') {
       host(); assert(!a.paused, '活动已经暂停');
-      a.remaining = a.status === 'voting' ? Math.max(0, a.deadline - now) : null;
+      a.remainingMs = a.status === 'voting' ? Math.max(0, a.deadline - now) : null;
       a.paused = true;
     } else if (action === 'cancel') {
       host(); a.status = 'cancelled'; a.paused = false; a.deadline = null;
@@ -240,12 +252,12 @@
           break;
         }
         case 'requirements': {
-          const origin = ORIGINS[data.originIndex];
-          assert(origin, '请选择示例出发地');
+          const origin = data.origin;
+          assert(origin && typeof origin.name === 'string' && origin.name.trim() && Number.isFinite(origin.lng) && Number.isFinite(origin.lat), '请选择有效出发地');
           assert(['公共交通', '驾车', '步行', '骑行'].includes(data.mode), '请选择交通方式');
           assert(OPTIONS[a.type].includes(data.preference), '请选择适用的活动偏好');
           assert(Number.isFinite(data.budget) && data.budget >= 0 && data.budget <= 5000, '预算应在 0—5000 元之间');
-          Object.assign(actor, { origin: clone(origin), mode: data.mode, preference: data.preference, budget: data.budget, shared: !!data.shared });
+          Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), mode: data.mode, preference: data.preference, budget: data.budget, shared: !!data.shared });
           break;
         }
         case 'recommend':
