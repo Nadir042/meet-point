@@ -1,0 +1,1582 @@
+openapi: 3.0.3
+info:
+  title: MeetPoint Sprint 2 统一 API
+  version: 2.0.0
+  description: |-
+    依据群内《MeetPoint Sprint 2 统一 API 交付文档》整理的目标契约。
+
+    Mock 响应均为独立场景，使用示例成员、地点和票数。如需同一路径按 action 返回不同结果，在 Apifox 中用 Body 的 action、$.data.decision 等设置 Mock 期望。
+
+    联调时待确认的约定
+
+    - 活动操作成功响应暂沿用 data.activity；city 暂设为可选。
+    - 申请列表条目、推荐 warnings 和历史状态完整枚举以联调结果为准。
+    - INVALID_REQUEST、UNAUTHORIZED、ACTIVITY_NOT_FOUND 为通用错误示例。文档未逐项给出 HTTP 状态码和投票错误的可重试性，文件内对应映射供联调确认。
+servers:
+- url: http://127.0.0.1:3000
+  description: 本地后端默认地址，待 Sprint 2 接口联调
+tags:
+- name: Sprint 2 地点与地图
+- name: Sprint 2 活动需求
+- name: Sprint 2 活动查询
+- name: Sprint 2 活动操作
+security:
+- activityBearer: []
+paths:
+  /api/locations/search:
+    get:
+      tags: [Sprint 2 地点与地图]
+      summary: 搜索地点
+      operationId: searchLocations
+      description: 搜索高德地点，后端最多返回 10 条，前端默认展示前 5 条。坐标为 GCJ-02。
+      parameters:
+      - name: keyword
+        in: query
+        required: true
+        description: 地点关键词
+        schema: {type: string, minLength: 1}
+        example: 人民广场
+      - name: city
+        in: query
+        required: false
+        description: 检索城市；是否必填以服务端联调为准
+        schema: {type: string}
+        example: 上海
+      responses:
+        '200':
+          description: 地点列表；无匹配时返回空数组
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: {type: boolean, enum: [true]}
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items: {type: array, items: {$ref: '#/components/schemas/Location'}, maxItems: 10}
+              examples:
+                found:
+                  summary: 找到地点
+                  value:
+                    success: true
+                    data:
+                      items:
+                      - {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息, lng: 121.4752,
+                        lat: 31.238}
+                empty:
+                  summary: 无匹配结果
+                  value: {success: true, data: {items: []}}
+        '400':
+          description: 请求字段有误或前置资料不完整
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                INVALID_REQUEST:
+                  summary: 请检查必填字段和字段格式
+                  value: {success: false, error: {code: INVALID_REQUEST, message: 请检查必填字段和字段格式, retryable: false}}
+        '401':
+          description: 缺少或无效的 Bearer 令牌
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                UNAUTHORIZED:
+                  summary: 活动令牌缺失或无效
+                  value: {success: false, error: {code: UNAUTHORIZED, message: 活动令牌缺失或无效, retryable: false}}
+        '429':
+          description: 地图配额受限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_QUOTA_EXCEEDED:
+                  summary: 地图配额用尽
+                  value: {success: false, error: {code: MAP_QUOTA_EXCEEDED, message: 地图配额用尽, retryable: false}}
+        '502':
+          description: 地图或路线服务返回异常
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_PROVIDER_ERROR:
+                  summary: 地图服务返回异常
+                  value: {success: false, error: {code: MAP_PROVIDER_ERROR, message: 地图服务返回异常, retryable: true}}
+        '504':
+          description: 地图服务超时
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_TIMEOUT:
+                  summary: 地图服务超时
+                  value: {success: false, error: {code: MAP_TIMEOUT, message: 地图服务超时, retryable: true}}
+  /api/locations/reverse:
+    get:
+      tags: [Sprint 2 地点与地图]
+      summary: 当前位置逆地理编码
+      operationId: reverseLocation
+      description: 用 GCJ-02 经纬度获取高德地点。前端在用户主动点击并授权定位后请求此接口。
+      parameters:
+      - name: lng
+        in: query
+        required: true
+        description: 经度
+        schema: {type: number, minimum: -180, maximum: 180, description: GCJ-02 经度}
+        example: 121.4752
+      - name: lat
+        in: query
+        required: true
+        description: 纬度
+        schema: {type: number, minimum: -90, maximum: 90, description: GCJ-02 纬度}
+        example: 31.238
+      responses:
+        '200':
+          description: 返回当前位置对应的地点
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: {type: boolean, enum: [true]}
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/Location'}
+              examples:
+                success:
+                  summary: 返回人民广场
+                  value:
+                    success: true
+                    data: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息, lng: 121.4752,
+                      lat: 31.238}
+        '400':
+          description: 请求字段有误或前置资料不完整
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                INVALID_REQUEST:
+                  summary: 请检查必填字段和字段格式
+                  value: {success: false, error: {code: INVALID_REQUEST, message: 请检查必填字段和字段格式, retryable: false}}
+        '401':
+          description: 缺少或无效的 Bearer 令牌
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                UNAUTHORIZED:
+                  summary: 活动令牌缺失或无效
+                  value: {success: false, error: {code: UNAUTHORIZED, message: 活动令牌缺失或无效, retryable: false}}
+        '429':
+          description: 地图配额受限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_QUOTA_EXCEEDED:
+                  summary: 地图配额用尽
+                  value: {success: false, error: {code: MAP_QUOTA_EXCEEDED, message: 地图配额用尽, retryable: false}}
+        '502':
+          description: 地图或路线服务返回异常
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_PROVIDER_ERROR:
+                  summary: 地图服务返回异常
+                  value: {success: false, error: {code: MAP_PROVIDER_ERROR, message: 地图服务返回异常, retryable: true}}
+        '504':
+          description: 地图服务超时
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_TIMEOUT:
+                  summary: 地图服务超时
+                  value: {success: false, error: {code: MAP_TIMEOUT, message: 地图服务超时, retryable: true}}
+  /api/activities/{activityId}/requirements:
+    put:
+      tags: [Sprint 2 活动需求]
+      summary: 保存本人出行需求
+      operationId: saveRequirements
+      description: |-
+        只接受已从高德搜索或逆地理编码确认的地点。旧活动的 originIndex 需要重新选点。
+
+        - 聚餐：不限、火锅、烧烤、中餐、西餐、咖啡甜品。
+        - 休闲娱乐：不限、KTV、桌游、电影院、公园、商场、剧本杀、密室逃脱、美甲、手工、写真、拼豆。
+        - 线下会面：不限、学习讨论、工作交流、朋友会面、安静场所、交通便利。
+      parameters:
+      - {$ref: '#/components/parameters/ActivityId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RequirementsInput'}
+            examples:
+              save:
+                summary: 公共交通，出发地设为私密
+                value:
+                  origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息, lng: 121.4752,
+                    lat: 31.238}
+                  mode: 公共交通
+                  preference: 火锅
+                  budget: 100
+                  shared: false
+      responses:
+        '200':
+          description: 返回当前请求者看到的活动
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ActivityResponse'}
+              examples:
+                saved:
+                  summary: 保存成功
+                  value:
+                    success: true
+                    message: 出行需求已保存
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 0
+                        status: collecting
+                        paused: false
+                        deadline: null
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates: []
+                        groups: {}
+                        requests: []
+                        voteStatus:
+                          round: 0
+                          status: collecting
+                          paused: false
+                          deadline: null
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 0
+                          myVote: null
+                          voteCounts: {}
+                          allVoted: false
+        '400':
+          description: 请求字段有误或前置资料不完整
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                INVALID_REQUEST:
+                  summary: 请检查必填字段和字段格式
+                  value: {success: false, error: {code: INVALID_REQUEST, message: 请检查必填字段和字段格式, retryable: false}}
+        '401':
+          description: 缺少或无效的 Bearer 令牌
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                UNAUTHORIZED:
+                  summary: 活动令牌缺失或无效
+                  value: {success: false, error: {code: UNAUTHORIZED, message: 活动令牌缺失或无效, retryable: false}}
+        '403':
+          description: 当前身份无权限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                NOT_ACTIVITY_MEMBER:
+                  summary: 当前身份不是活动成员
+                  value: {success: false, error: {code: NOT_ACTIVITY_MEMBER, message: 当前身份不是活动成员, retryable: false}}
+        '404':
+          description: 请求的资源不存在或已失效
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                ACTIVITY_NOT_FOUND:
+                  summary: 活动不存在
+                  value: {success: false, error: {code: ACTIVITY_NOT_FOUND, message: 活动不存在, retryable: false}}
+  /api/activities/{activityId}:
+    get:
+      tags: [Sprint 2 活动查询]
+      summary: 查询当前活动
+      operationId: getActivity
+      description: 本人可见自己的出发地和路线。其他成员的出发地未公开时，其 origin 为 null，已填写时 originReady 为 true；同时隐藏其个人路线。投票只返回候选汇总及当前请求者的选票。
+      parameters:
+      - {$ref: '#/components/parameters/ActivityId'}
+      responses:
+        '200':
+          description: 返回当前请求者看到的活动
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ActivityResponse'}
+              examples:
+                success:
+                  summary: 其他成员的出发地与路线已隐藏
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: voting
+                        paused: false
+                        deadline: 1793773800000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 2
+                          status: voting
+                          paused: false
+                          deadline: 1793773800000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 1
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 0, c_2_B0A2: 1}
+                          allVoted: false
+        '401':
+          description: 缺少或无效的 Bearer 令牌
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                UNAUTHORIZED:
+                  summary: 活动令牌缺失或无效
+                  value: {success: false, error: {code: UNAUTHORIZED, message: 活动令牌缺失或无效, retryable: false}}
+        '403':
+          description: 当前身份无权限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                NOT_ACTIVITY_MEMBER:
+                  summary: 当前身份不是活动成员
+                  value: {success: false, error: {code: NOT_ACTIVITY_MEMBER, message: 当前身份不是活动成员, retryable: false}}
+        '404':
+          description: 请求的资源不存在或已失效
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                ACTIVITY_NOT_FOUND:
+                  summary: 活动不存在
+                  value: {success: false, error: {code: ACTIVITY_NOT_FOUND, message: 活动不存在, retryable: false}}
+  /api/activities/{activityId}/vote-history:
+    get:
+      tags: [Sprint 2 活动查询]
+      summary: 查询历史投票
+      operationId: getVoteHistory
+      description: 活动成员可查询已归档的轮次、候选摘要、汇总票数和获胜候选。轮次结束、被新推荐替代或零票重投时保存汇总。
+      parameters:
+      - {$ref: '#/components/parameters/ActivityId'}
+      responses:
+        '200':
+          description: 按活动返回历史轮次汇总
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: {type: boolean, enum: [true]}
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [items]
+                    properties:
+                      items: {type: array, items: {$ref: '#/components/schemas/RoundHistoryItem'}}
+              examples:
+                superseded:
+                  summary: 已有历史轮次
+                  value:
+                    success: true
+                    data:
+                      items:
+                      - round: 1
+                        status: superseded
+                        startedAt: 1793680000000
+                        endedAt: 1793766400000
+                        candidates:
+                        - {id: c_1_B0A1, placeId: B0A1, name: 静安嘉里中心, score: 8.9, overallRank: 1}
+                        voteCounts: {c_1_B0A1: 2}
+                        winningCandidateId: null
+                empty:
+                  summary: 暂无历史轮次
+                  value: {success: true, data: {items: []}}
+        '401':
+          description: 缺少或无效的 Bearer 令牌
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                UNAUTHORIZED:
+                  summary: 活动令牌缺失或无效
+                  value: {success: false, error: {code: UNAUTHORIZED, message: 活动令牌缺失或无效, retryable: false}}
+        '403':
+          description: 当前身份无权限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                NOT_ACTIVITY_MEMBER:
+                  summary: 当前身份不是活动成员
+                  value: {success: false, error: {code: NOT_ACTIVITY_MEMBER, message: 当前身份不是活动成员, retryable: false}}
+        '404':
+          description: 请求的资源不存在或已失效
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                ACTIVITY_NOT_FOUND:
+                  summary: 活动不存在
+                  value: {success: false, error: {code: ACTIVITY_NOT_FOUND, message: 活动不存在, retryable: false}}
+  /api/activities/{activityId}/actions:
+    post:
+      tags: [Sprint 2 活动操作]
+      summary: 执行活动操作
+      operationId: actOnActivity
+      description: |-
+        按 action 区分操作，沿用同一 HTTP 入口。推荐的正常完成时间目标为 10 秒。综合评分对公平性、整体耗时、偏好匹配与交通便利等权平均，缺失数据时按有效维度平均。预算在有可靠消费数据时纳入偏好。候选任一成员路线失败则不参与评分；无可用候选时保留原轮次。
+
+        - **首次推荐** — 发起者执行。需要 2～10 名有效成员且需求完整。推荐成功才增加轮次，开启 24 小时投票。地图或路线失败时保留原轮次。
+        - **投票或改票** — 校验 round 与 candidateId。重复提交更新本人选票，身份由 Bearer 令牌确定。
+        - **申请重新推荐** — 每名成员每轮至多一条待处理申请；被拒绝后可以再次申请。
+        - **批准重新推荐** — 仅发起者可审批。先执行真实推荐，成功后归档旧轮次并开始新轮次。
+        - **拒绝重新推荐** — 仅发起者可审批，拒绝必须填写原因。
+        - **提前结束投票** — 仅发起者可在全员投票后提前结束。与到期自动计票使用相同规则，平票按 overallRank 决定。
+        - **零票重投** — 仅发起者可在当前轮次到期且有效票数为零后执行。归档旧轮次，复用地点、路线、评分和排名，生成新候选 ID，开启 24 小时投票。
+        - **暂停** — 仅发起者可操作。保存 remainingMs = deadline - now，暂停投票、改票、推荐及自动计票。
+        - **恢复** — 仅发起者可操作。恢复时按 deadline = now + remainingMs 重设截止时间。
+      parameters:
+      - {$ref: '#/components/parameters/ActivityId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+              - title: 首次推荐
+                description: 发起者执行。需要 2～10 名有效成员且需求完整。推荐成功才增加轮次，开启 24 小时投票。地图或路线失败时保留原轮次。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [recommend]}
+                  data: {type: object, additionalProperties: false}
+                additionalProperties: false
+              - title: 投票或改票
+                description: 校验 round 与 candidateId。重复提交更新本人选票，身份由 Bearer 令牌确定。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [vote]}
+                  data:
+                    type: object
+                    required: [round, candidateId]
+                    properties:
+                      round: {type: integer, minimum: 1}
+                      candidateId: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}'}
+                    additionalProperties: false
+                additionalProperties: false
+              - title: 申请重新推荐
+                description: 每名成员每轮至多一条待处理申请；被拒绝后可以再次申请。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [request]}
+                  data:
+                    type: object
+                    required: [round, reason]
+                    properties:
+                      round: {type: integer, minimum: 1}
+                      reason: {type: string, minLength: 1}
+                    additionalProperties: false
+                additionalProperties: false
+              - title: 批准重新推荐
+                description: 仅发起者可审批。先执行真实推荐，成功后归档旧轮次并开始新轮次。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [review-request]}
+                  data:
+                    type: object
+                    required: [requestId, decision]
+                    properties:
+                      requestId: {type: string}
+                      decision: {type: string, enum: [approved]}
+                    additionalProperties: false
+                additionalProperties: false
+              - title: 拒绝重新推荐
+                description: 仅发起者可审批，拒绝必须填写原因。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [review-request]}
+                  data:
+                    type: object
+                    required: [requestId, decision, reason]
+                    properties:
+                      requestId: {type: string}
+                      decision: {type: string, enum: [rejected]}
+                      reason: {type: string, minLength: 1}
+                    additionalProperties: false
+                additionalProperties: false
+              - title: 提前结束投票
+                description: 仅发起者可在全员投票后提前结束。与到期自动计票使用相同规则，平票按 overallRank 决定。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [finish]}
+                  data:
+                    type: object
+                    required: [round]
+                    properties:
+                      round: {type: integer, minimum: 1}
+                    additionalProperties: false
+                additionalProperties: false
+              - title: 零票重投
+                description: 仅发起者可在当前轮次到期且有效票数为零后执行。归档旧轮次，复用地点、路线、评分和排名，生成新候选 ID，开启 24 小时投票。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [revote]}
+                  data:
+                    type: object
+                    required: [round]
+                    properties:
+                      round: {type: integer, minimum: 1}
+                    additionalProperties: false
+                additionalProperties: false
+              - title: 暂停
+                description: 仅发起者可操作。保存 remainingMs = deadline - now，暂停投票、改票、推荐及自动计票。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [pause]}
+                  data: {type: object, additionalProperties: false}
+                additionalProperties: false
+              - title: 恢复
+                description: 仅发起者可操作。恢复时按 deadline = now + remainingMs 重设截止时间。
+                type: object
+                required: [action, data]
+                properties:
+                  action: {type: string, enum: [resume]}
+                  data: {type: object, additionalProperties: false}
+                additionalProperties: false
+            examples:
+              recommend:
+                summary: 首次推荐
+                value: {action: recommend, data: {}}
+              vote:
+                summary: 投票或改票
+                value: {action: vote, data: {round: 2, candidateId: c_2_B0A2}}
+              request:
+                summary: 申请重新推荐
+                value: {action: request, data: {round: 2, reason: 成员出发地发生变化}}
+              approve:
+                summary: 批准重新推荐
+                value: {action: review-request, data: {requestId: request-001, decision: approved}}
+              reject:
+                summary: 拒绝重新推荐
+                value: {action: review-request, data: {requestId: request-001, decision: rejected, reason: 当前方案仍然符合成员需求}}
+              finish:
+                summary: 提前结束投票
+                value: {action: finish, data: {round: 2}}
+              revote:
+                summary: 零票重投
+                value: {action: revote, data: {round: 2}}
+              pause:
+                summary: 暂停
+                value: {action: pause, data: {}}
+              resume:
+                summary: 恢复
+                value: {action: resume, data: {}}
+      responses:
+        '200':
+          description: 返回操作后的活动。各示例对应独立场景。
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ActivityResponse'}
+              examples:
+                recommend:
+                  summary: 首次推荐
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 1
+                        status: voting
+                        paused: false
+                        deadline: 1793687400000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_1_B0A1
+                          round: 1
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_1_B0A2
+                          round: 1
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_1_B0A2, c_1_B0A1], preference: [c_1_B0A2, c_1_B0A1], convenience: [c_1_B0A1,
+                            c_1_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 1
+                          status: voting
+                          paused: false
+                          deadline: 1793687400000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 0
+                          myVote: null
+                          voteCounts: {c_1_B0A1: 0, c_1_B0A2: 0}
+                          allVoted: false
+                vote:
+                  summary: 投票或改票
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: voting
+                        paused: false
+                        deadline: 1793773800000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 2
+                          status: voting
+                          paused: false
+                          deadline: 1793773800000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 1
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 0, c_2_B0A2: 1}
+                          allVoted: false
+                request:
+                  summary: 申请重新推荐
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: voting
+                        paused: false
+                        deadline: 1793773800000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests:
+                        - {id: request-001, round: 2, status: pending, reason: 成员出发地发生变化}
+                        voteStatus:
+                          round: 2
+                          status: voting
+                          paused: false
+                          deadline: 1793773800000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 1
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 0, c_2_B0A2: 1}
+                          allVoted: false
+                approve:
+                  summary: 批准重新推荐
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 3
+                        status: voting
+                        paused: false
+                        deadline: 1793860200000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_3_B0A1
+                          round: 3
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_3_B0A2
+                          round: 3
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_3_B0A2, c_3_B0A1], preference: [c_3_B0A2, c_3_B0A1], convenience: [c_3_B0A1,
+                            c_3_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 3
+                          status: voting
+                          paused: false
+                          deadline: 1793860200000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 0
+                          myVote: null
+                          voteCounts: {c_3_B0A1: 0, c_3_B0A2: 0}
+                          allVoted: false
+                reject:
+                  summary: 拒绝重新推荐
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: voting
+                        paused: false
+                        deadline: 1793773800000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests:
+                        - {id: request-001, round: 2, status: rejected, reason: 成员出发地发生变化}
+                        voteStatus:
+                          round: 2
+                          status: voting
+                          paused: false
+                          deadline: 1793773800000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 1
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 0, c_2_B0A2: 1}
+                          allVoted: false
+                finish:
+                  summary: 提前结束投票
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: completed
+                        paused: false
+                        deadline: null
+                        remainingMs: null
+                        winningCandidateId: c_2_B0A1
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 2
+                          status: completed
+                          paused: false
+                          deadline: null
+                          remainingMs: null
+                          winningCandidateId: c_2_B0A1
+                          totalMembers: 2
+                          votedMembers: 2
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 1, c_2_B0A2: 1}
+                          allVoted: true
+                revote:
+                  summary: 零票重投
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 3
+                        status: voting
+                        paused: false
+                        deadline: 1793860200000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_3_B0A1
+                          round: 3
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_3_B0A2
+                          round: 3
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_3_B0A2, c_3_B0A1], preference: [c_3_B0A2, c_3_B0A1], convenience: [c_3_B0A1,
+                            c_3_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 3
+                          status: voting
+                          paused: false
+                          deadline: 1793860200000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 0
+                          myVote: null
+                          voteCounts: {c_3_B0A1: 0, c_3_B0A2: 0}
+                          allVoted: false
+                pause:
+                  summary: 暂停
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: voting
+                        paused: true
+                        deadline: 1793773800000
+                        remainingMs: 3600000
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 2
+                          status: voting
+                          paused: true
+                          deadline: 1793773800000
+                          remainingMs: 3600000
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 1
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 0, c_2_B0A2: 1}
+                          allVoted: false
+                resume:
+                  summary: 恢复
+                  value:
+                    success: true
+                    data:
+                      activity:
+                        id: 00000000-0000-4000-8000-000000000001
+                        round: 2
+                        status: voting
+                        paused: false
+                        deadline: 1793773800000
+                        remainingMs: null
+                        winningCandidateId: null
+                        members:
+                        - id: member-1
+                          name: 示例成员一
+                          origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息,
+                            lng: 121.4752, lat: 31.238}
+                          originReady: true
+                          shared: false
+                        - {id: member-2, name: 示例成员二, origin: null, originReady: true, shared: false}
+                        candidates:
+                        - id: c_2_B0A1
+                          round: 2
+                          provider: amap
+                          placeId: B0A1
+                          name: 静安嘉里中心
+                          address: 上海市静安区南京西路1515号
+                          category: 购物中心
+                          lng: 121.4505
+                          lat: 31.2237
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 35, distanceMeters: 8600, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 27.5, minMinutes: 20, maxMinutes: 35, gapMinutes: 15}
+                          dimensions: {fairness: 8.7, time: 9.1, preference: 8.5, convenience: 9.3}
+                          score: 8.9
+                          overallRank: 1
+                          reasons: [全体成员预计出行时间差较小, 公共交通较为便利]
+                        - id: c_2_B0A2
+                          round: 2
+                          provider: amap
+                          placeId: B0A2
+                          name: 上海市第一百货商业中心
+                          address: 上海市黄浦区南京东路830号
+                          category: 购物中心
+                          lng: 121.4786
+                          lat: 31.2365
+                          routes:
+                          - {memberId: member-1, mode: 公共交通, minutes: 30, distanceMeters: 7400, cost: 4, costStatus: known}
+                          routeSummary: {averageMinutes: 35, minMinutes: 30, maxMinutes: 40, gapMinutes: 10}
+                          dimensions: {fairness: 9.0, time: 8.5, preference: 8.8, convenience: 8.1}
+                          score: 8.6
+                          overallRank: 2
+                          reasons: [符合活动偏好]
+                        groups: {fairness: [c_2_B0A2, c_2_B0A1], preference: [c_2_B0A2, c_2_B0A1], convenience: [c_2_B0A1,
+                            c_2_B0A2]}
+                        requests: []
+                        voteStatus:
+                          round: 2
+                          status: voting
+                          paused: false
+                          deadline: 1793773800000
+                          remainingMs: null
+                          winningCandidateId: null
+                          totalMembers: 2
+                          votedMembers: 1
+                          myVote: c_2_B0A2
+                          voteCounts: {c_2_B0A1: 0, c_2_B0A2: 1}
+                          allVoted: false
+        '400':
+          description: 请求字段有误或前置资料不完整
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                INVALID_REQUEST:
+                  summary: 请检查必填字段和字段格式
+                  value: {success: false, error: {code: INVALID_REQUEST, message: 请检查必填字段和字段格式, retryable: false}}
+                INSUFFICIENT_ORIGINS:
+                  summary: 有成员未填写有效出发地
+                  value: {success: false, error: {code: INSUFFICIENT_ORIGINS, message: 有成员未填写有效出发地, retryable: false}}
+                REJECT_REASON_REQUIRED:
+                  summary: 请填写拒绝原因
+                  value: {success: false, error: {code: REJECT_REASON_REQUIRED, message: 请填写拒绝原因, retryable: false}}
+        '401':
+          description: 缺少或无效的 Bearer 令牌
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                UNAUTHORIZED:
+                  summary: 活动令牌缺失或无效
+                  value: {success: false, error: {code: UNAUTHORIZED, message: 活动令牌缺失或无效, retryable: false}}
+        '403':
+          description: 当前身份无权限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                NOT_ACTIVITY_MEMBER:
+                  summary: 当前身份不是活动成员
+                  value: {success: false, error: {code: NOT_ACTIVITY_MEMBER, message: 当前身份不是活动成员, retryable: false}}
+                NOT_INITIATOR:
+                  summary: 仅活动发起者可执行此操作
+                  value: {success: false, error: {code: NOT_INITIATOR, message: 仅活动发起者可执行此操作, retryable: false}}
+        '404':
+          description: 请求的资源不存在或已失效
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                ACTIVITY_NOT_FOUND:
+                  summary: 活动不存在
+                  value: {success: false, error: {code: ACTIVITY_NOT_FOUND, message: 活动不存在, retryable: false}}
+                CANDIDATE_NOT_IN_ROUND:
+                  summary: 候选不属于当前轮次
+                  value: {success: false, error: {code: CANDIDATE_NOT_IN_ROUND, message: 候选不属于当前轮次, retryable: false}}
+                REQUEST_NOT_FOUND:
+                  summary: 申请不存在或已失效
+                  value: {success: false, error: {code: REQUEST_NOT_FOUND, message: 申请不存在或已失效, retryable: false}}
+        '409':
+          description: 当前活动或轮次状态冲突
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                ROUND_STALE:
+                  summary: 推荐方案已更新，请刷新
+                  value: {success: false, error: {code: ROUND_STALE, message: 推荐方案已更新，请刷新, retryable: false}}
+                VOTING_CLOSED:
+                  summary: 投票已截止
+                  value: {success: false, error: {code: VOTING_CLOSED, message: 投票已截止, retryable: false}}
+                ACTIVITY_PAUSED:
+                  summary: 活动已暂停
+                  value: {success: false, error: {code: ACTIVITY_PAUSED, message: 活动已暂停, retryable: false}}
+                ACTIVITY_COMPLETED:
+                  summary: 活动已完成
+                  value: {success: false, error: {code: ACTIVITY_COMPLETED, message: 活动已完成, retryable: false}}
+                ACTIVITY_CANCELLED:
+                  summary: 活动已取消
+                  value: {success: false, error: {code: ACTIVITY_CANCELLED, message: 活动已取消, retryable: false}}
+                NOT_ALL_VOTED:
+                  summary: 尚未全员投票
+                  value: {success: false, error: {code: NOT_ALL_VOTED, message: 尚未全员投票, retryable: false}}
+                NOT_ZERO_VOTES:
+                  summary: 当前轮次存在有效选票
+                  value: {success: false, error: {code: NOT_ZERO_VOTES, message: 当前轮次存在有效选票, retryable: false}}
+                REQUEST_ALREADY_HANDLED:
+                  summary: 申请已经处理
+                  value: {success: false, error: {code: REQUEST_ALREADY_HANDLED, message: 申请已经处理, retryable: false}}
+                NO_CANDIDATES:
+                  summary: 当前没有可用候选
+                  value: {success: false, error: {code: NO_CANDIDATES, message: 当前没有可用候选, retryable: false}}
+        '429':
+          description: 地图配额受限
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_QUOTA_EXCEEDED:
+                  summary: 地图配额用尽
+                  value: {success: false, error: {code: MAP_QUOTA_EXCEEDED, message: 地图配额用尽, retryable: false}}
+        '502':
+          description: 地图或路线服务返回异常
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_PROVIDER_ERROR:
+                  summary: 地图服务返回异常
+                  value: {success: false, error: {code: MAP_PROVIDER_ERROR, message: 地图服务返回异常, retryable: true}}
+                ROUTES_UNAVAILABLE:
+                  summary: 所有候选路线失败
+                  value: {success: false, error: {code: ROUTES_UNAVAILABLE, message: 所有候选路线失败, retryable: true}}
+        '504':
+          description: 地图服务超时
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+              examples:
+                MAP_TIMEOUT:
+                  summary: 地图服务超时
+                  value: {success: false, error: {code: MAP_TIMEOUT, message: 地图服务超时, retryable: true}}
+components:
+  securitySchemes:
+    activityBearer:
+      type: http
+      scheme: bearer
+      description: 活动或账号 Bearer 令牌，由后端判定身份。
+  parameters:
+    ActivityId:
+      name: activityId
+      in: path
+      required: true
+      description: 活动 ID
+      schema: {type: string}
+      example: 00000000-0000-4000-8000-000000000001
+  schemas:
+    Location:
+      type: object
+      required: [provider, placeId, name, address, category, lng, lat]
+      properties:
+        provider: {type: string, enum: [amap]}
+        placeId: {type: string}
+        name: {type: string}
+        address: {type: string}
+        category: {type: string}
+        lng: {type: number, minimum: -180, maximum: 180, description: GCJ-02 经度}
+        lat: {type: number, minimum: -90, maximum: 90, description: GCJ-02 纬度}
+    Route:
+      type: object
+      required: [memberId, mode, minutes, distanceMeters, cost, costStatus]
+      properties:
+        memberId: {type: string}
+        mode: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}
+        minutes: {type: number, minimum: 0}
+        distanceMeters: {type: integer, minimum: 0}
+        cost: {type: number, minimum: 0, nullable: true, description: 人民币元，仅 costStatus 为 known 时为数值}
+        costStatus: {type: string, enum: [known, unknown, unavailable, not_applicable]}
+    RouteSummary:
+      type: object
+      required: [averageMinutes, minMinutes, maxMinutes, gapMinutes]
+      properties:
+        averageMinutes: {type: number, minimum: 0}
+        minMinutes: {type: number, minimum: 0}
+        maxMinutes: {type: number, minimum: 0}
+        gapMinutes: {type: number, minimum: 0}
+    ScoreDimensions:
+      type: object
+      properties:
+        fairness: {type: number, minimum: 0}
+        time: {type: number, minimum: 0}
+        preference: {type: number, minimum: 0}
+        convenience: {type: number, minimum: 0}
+      description: 有效维度等权平均；缺少可靠数据的维度可省略
+    Candidate:
+      type: object
+      required: [id, round, provider, placeId, name, address, category, lng, lat, routes, routeSummary, dimensions, score,
+        overallRank, reasons]
+      properties:
+        id: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}'}
+        round: {type: integer, minimum: 1}
+        provider: {type: string, enum: [amap]}
+        placeId: {type: string}
+        name: {type: string}
+        address: {type: string}
+        category: {type: string}
+        lng: {type: number, minimum: -180, maximum: 180, description: GCJ-02 经度}
+        lat: {type: number, minimum: -90, maximum: 90, description: GCJ-02 纬度}
+        routes: {type: array, items: {$ref: '#/components/schemas/Route'}, description: 仅含本人及公开出发地成员的路线}
+        routeSummary: {$ref: '#/components/schemas/RouteSummary'}
+        dimensions: {$ref: '#/components/schemas/ScoreDimensions'}
+        score: {type: number, minimum: 0}
+        overallRank: {type: integer, minimum: 1}
+        reasons: {type: array, items: {type: string}, description: 理由不包含成员姓名或私人出发地信息}
+    RecommendationGroups:
+      type: object
+      properties:
+        fairness: {type: array, items: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}'},
+          maxItems: 3, uniqueItems: true}
+        preference: {type: array, items: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}'},
+          maxItems: 3, uniqueItems: true}
+        convenience: {type: array, items: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}'},
+          maxItems: 3, uniqueItems: true}
+      description: 每组按对应维度排序，同一候选可跨组出现；尚未推荐时允许空对象
+    Recommendation:
+      type: object
+      required: [round, groups, candidates, warnings]
+      properties:
+        round: {type: integer, minimum: 1}
+        groups: {$ref: '#/components/schemas/RecommendationGroups'}
+        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        warnings: {type: array, items: {}, description: 推荐警告；条目结构以服务端联调为准}
+    VoteStatus:
+      type: object
+      required: [round, status, paused, deadline, remainingMs, totalMembers, votedMembers, myVote, voteCounts, allVoted, winningCandidateId]
+      properties:
+        round: {type: integer, minimum: 0}
+        status: {type: string, enum: [collecting, voting, no-votes, completed, cancelled]}
+        paused: {type: boolean}
+        deadline: {type: integer, format: int64, minimum: 0, description: Unix 毫秒, nullable: true}
+        remainingMs: {type: integer, format: int64, minimum: 0, nullable: true, description: 暂停时的剩余毫秒数}
+        totalMembers: {type: integer, minimum: 0}
+        votedMembers: {type: integer, minimum: 0}
+        myVote: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}', nullable: true}
+        voteCounts: {type: object, additionalProperties: {type: integer, minimum: 0}, description: 键为本轮候选 ID，值为该候选的汇总票数}
+        allVoted: {type: boolean}
+        winningCandidateId: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}', nullable: true}
+    HistoryCandidate:
+      type: object
+      required: [id, placeId, name, score, overallRank]
+      properties:
+        id: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}'}
+        placeId: {type: string}
+        name: {type: string}
+        score: {type: number, minimum: 0}
+        overallRank: {type: integer, minimum: 1}
+      additionalProperties: false
+    RoundHistoryItem:
+      type: object
+      required: [round, status, startedAt, endedAt, candidates, voteCounts, winningCandidateId]
+      properties:
+        round: {type: integer, minimum: 1}
+        status: {type: string, description: 历史轮次状态，例如 superseded}
+        startedAt: {type: integer, format: int64, minimum: 0, description: Unix 毫秒}
+        endedAt: {type: integer, format: int64, minimum: 0, description: Unix 毫秒}
+        candidates: {type: array, items: {$ref: '#/components/schemas/HistoryCandidate'}}
+        voteCounts: {type: object, additionalProperties: {type: integer, minimum: 0}, description: 键为本轮候选 ID，值为该候选的汇总票数}
+        winningCandidateId: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}', nullable: true}
+      additionalProperties: false
+    Member:
+      type: object
+      required: [id, origin, originReady]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        origin:
+          oneOf:
+          - {$ref: '#/components/schemas/Location'}
+          - {type: object, nullable: true, enum: [null]}
+        originReady: {type: boolean, description: 已填写有效出发地；对其他成员隐藏出发地时也可为 true}
+        shared: {type: boolean}
+    Activity:
+      type: object
+      required: [id, status, paused, round, deadline, remainingMs, winningCandidateId, members, candidates, groups, requests,
+        voteStatus]
+      properties:
+        id: {type: string}
+        status: {type: string, enum: [collecting, voting, no-votes, completed, cancelled]}
+        paused: {type: boolean}
+        round: {type: integer, minimum: 0}
+        deadline: {type: integer, format: int64, minimum: 0, description: Unix 毫秒, nullable: true}
+        remainingMs: {type: integer, format: int64, minimum: 0, nullable: true, description: 暂停时的剩余毫秒数}
+        winningCandidateId: {type: string, pattern: '^c_[1-9][0-9]*_.+$', description: 'c_{round}_{placeId}', nullable: true}
+        members: {type: array, items: {$ref: '#/components/schemas/Member'}}
+        candidates: {type: array, items: {$ref: '#/components/schemas/Candidate'}}
+        groups: {$ref: '#/components/schemas/RecommendationGroups'}
+        requests: {type: array, items: {type: object, description: 重新推荐申请；字段细节以服务端联调为准}}
+        voteStatus: {$ref: '#/components/schemas/VoteStatus'}
+      description: 当前请求者看到的活动。隐藏其他成员的私人出发地、个人路线与逐人投票。
+    ActivityResponse:
+      type: object
+      required: [success, data]
+      properties:
+        success: {type: boolean, enum: [true]}
+        message: {type: string}
+        data:
+          type: object
+          required: [activity]
+          properties:
+            activity: {$ref: '#/components/schemas/Activity'}
+    RequirementsInput:
+      type: object
+      required: [origin, mode, preference, budget, shared]
+      properties:
+        origin: {$ref: '#/components/schemas/Location'}
+        mode: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}
+        preference: {type: string, description: 按活动类型选择，取值见接口说明}
+        budget: {type: number, minimum: 0, description: 预算，单位人民币元}
+        shared: {type: boolean, description: 是否向其他成员公开出发地}
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [success, error]
+      properties:
+        success: {type: boolean, enum: [false]}
+        error:
+          type: object
+          required: [code, message, retryable]
+          properties:
+            code: {type: string}
+            message: {type: string}
+            retryable: {type: boolean}
