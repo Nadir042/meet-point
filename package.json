@@ -7,7 +7,10 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check core.js && node --check app.js && node --check journal.js && node --check media.js && node --check shared-store.js && node --check server.js"
+    "check": "node --check core.js && node --check app.js && node --check journal.js && node --check media.js && node --check shared-store.js && node --check server.js && node --check amap.js && node --check recommendation.js && node --check place-policy.js && node --check map-mock.js && node --check scripts/verify-map.js",
+    "verify:map": "node scripts/verify-map.js"
   },
-  "engines": { "node": ">=22.13" }
+  "engines": {
+    "node": ">=22.13"
+  }
 }

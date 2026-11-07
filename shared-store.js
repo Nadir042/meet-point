@@ -81,6 +81,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
   };
   const project = (a, viewerId) => ({
     ...M.migrate(a), viewerId, requirementsReady: M.ready(a),
+    candidates: a.candidates.map(p=>({...p,routes:p.routes.filter(r=>r.memberId===viewerId||a.members.find(m=>m.id===r.memberId)?.shared)})),
     members: M.visibleMembers(a, viewerId).map(m => ({
       ...m, ready: !!a.members.find(member => member.id === m.id)?.origin
     }))
@@ -201,11 +202,30 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         return { activity: project(a, memberId) };
       });
     },
+    async recommendLive(id, token, provider) {
+      const {activity,memberId}=authenticate(id,token);
+      if(memberId!==activity.hostId) fail(403,'只有发起者可以推荐');
+      if(activity.paused||['completed','cancelled'].includes(activity.status)) fail(409,'当前活动不能推荐');
+      if(!M.ready(activity)) fail(400,'请所有成员先填写完整需求');
+      const version=JSON.stringify(activity);
+      const signal=AbortSignal.timeout(30000);
+      const bounded={search:(...args)=>provider.search(args[0],args[1],undefined,signal),route:(...args)=>provider.route(...args,signal)};
+      const result=await require('./recommendation').recommend(activity,bounded);
+      return withWrite(()=>{
+        const current=authenticate(id,token);
+        if(JSON.stringify(current.activity)!==version) fail(409,'活动已更新，请重新推荐');
+        const a=M.act(current.activity,memberId,'recommend',{recommendation:result});
+        update.run(JSON.stringify(a),id);
+        return {activity:project(a,memberId)};
+      });
+    },
+    authorizeLocation(id,token){authenticate(id,token);},
     act(id, token, input) {
       const allowed = new Set(['requirements', 'recommend', 'request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
       if (!input || !allowed.has(input.action)) fail(400, '不支持该操作');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
+        if(input.action==='recommend'||input.data?.recommendation) fail(400,'推荐数据只能由服务端生成');
         const a = M.act(activity, memberId, input.action, input.data || {});
         update.run(JSON.stringify(a), id);
         if (input.action === 'leave' || input.action === 'remove') {

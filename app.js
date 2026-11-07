@@ -372,7 +372,7 @@
       <div class="poi-card-top"><span class="poi-rank">${i >= 0 ? `${M.GROUPS.find(g => g.id === group).name} · 第 ${i + 1} 名` : '已确认的最终集合点'}</span><button class="icon-button" data-action="close-poi" aria-label="关闭地点详情">${icon('close')}</button></div>
       <div class="candidate-body"><div class="candidate-title"><h3 id="poi-title">${esc(p.name)}</h3><div class="score">${p.score.toFixed(1)}<small>/ 10</small></div></div><p class="address">${icon('pin')}${esc(p.area)}</p><p class="poi-description">${esc(p.subtitle)}</p>
         <div class="metrics"><div><small>我的预计用时</small><strong>${mine?.minutes ?? '—'}<span> 分钟</span></strong></div><div><small>全员平均用时</small><strong>${p.average}<span> 分钟</span></strong></div></div>
-        <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${p.dimensions.preference.toFixed(1)} / 10 分` : `便利度 ${p.dimensions.convenience.toFixed(1)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
+        <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${(p.dimensions.preference == null ? '未知' : p.dimensions.preference.toFixed(1))} / 10 分` : `便利度 ${p.dimensions.convenience.toFixed(1)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
         <details class="poi-details"><summary>评分依据与成员路线比较</summary>${scoreDetails(p)}</details>
         <div class="vote-row"><span><strong>${count}</strong> 票支持</span><button class="button ${vote === p.id || winner ? 'primary' : 'vote-button'}" data-action="vote" data-value="${p.id}" ${a.status !== 'voting' || a.paused || !canAccess() || a.deadline <= Date.now() ? 'disabled' : ''}>${vote === p.id || winner ? icon('check') : ''}${winner ? '最终集合点' : vote === p.id ? '我已投票' : vote ? '改投这里' : '投票给这里'}</button></div>
         <p class="poi-vote-status">${a.paused ? '活动已暂停，暂不可投票或改票' : a.status === 'voting' ? a.deadline <= Date.now() ? '本轮投票已截止，正在更新结果' : vote === p.id ? '这是你当前的选择，截止前可以改票' : '三组推荐共用每人一票，截止前可以改票' : statusText(a)} · 预计费用：未知</p>
@@ -485,12 +485,12 @@
     return `<div class="recommend-page">${activityHeader()}${resultBanner()}
       <section class="recommend-toolbar" aria-label="推荐方案"><div class="group-tabs" role="tablist" aria-label="推荐方案">${M.GROUPS.map(g => `<button id="tab-${g.id}" role="tab" aria-controls="recommend-map" aria-selected="${g.id === group}" tabindex="${g.id === group ? 0 : -1}" class="${g.id === group ? 'selected' : ''}" data-action="recommend-group" data-value="${g.id}"><strong>${g.name}</strong><small>TOP ${a.groups[g.id]?.length || 0}</small></button>`).join('')}</div>
       <button class="text-button" data-action="${isHost() ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? isHost() ? '重新推荐' : '申请重新推荐' : '生成推荐'}</button></section>
-      <p class="group-description">${selectedGroup.description} 点击地点标记查看详情并投票。</p>
+      ${(a.warnings || []).map(w => `<p class="notice">${esc(w)}</p>`).join('')}<p class="group-description">${selectedGroup.description} 点击地点标记查看详情并投票。</p>
       <div id="recommend-map" role="tabpanel" aria-labelledby="tab-${group}">
       <div class="poi-shortcuts" aria-label="快速选择地点">${mapPoints().map(p => `<button data-action="select-poi" data-value="${p.id}" aria-pressed="${selectedPoi === p.id}">${esc(p.name)}${a.winningCandidateId === p.id ? ' · 最终地点' : ''}</button>`).join('')}</div>
       ${mapPanel()}
       ${!candidates.length ? `<div class="empty-state compact"><h3>好去处，从了解每个人开始</h3><p>邀请至少一位伙伴，并为所有成员填写出行需求。准备就绪后生成推荐并开放投票。</p><button class="button primary" data-action="${ready(a) && isHost() ? 'recommend' : 'requirements'}" ${terminal(a) || a.paused ? 'disabled' : ''}>${ready(a) && isHost() ? '生成三组推荐' : '填写我的出行需求'}</button></div>` : ''}</div>
-      <div class="data-note">三组共用每人一票，同一地点跨组出现时票数合并。四项评分维度等权；地图、路线与费用仍为演示数据。</div>
+      <div class="data-note">三组共用每人一票，同一地点跨组出现时票数合并。四项评分维度等权；${isShared(a) ? '地点和路线来自高德，费用按可获得数据展示；仅供出行参考。' : '当前为本机示例数据。'}</div>
       <div class="recommend-support">${memberPanel()}${votePanel()}</div>${requestsPanel(a)}</div>`;
   }
   function overview() {
@@ -550,17 +550,52 @@
     $('#modal').close();
     if (focusBeforeModal?.isConnected) focusBeforeModal.focus();
   }
+  let selectedOrigin = null;
   function requirements() {
+    selectedOrigin = self()?.origin || null;
     const a = active(), m = self();
     if (!m) return toast('请先加入活动');
     openModal('我的出行需求', `<p class="modal-intro">从哪里出发，想怎样相聚，都由你来决定。</p><form id="requirements-form">
-      <label>出发地 <span class="label-note">Demo 提供上海示例位置</span><select name="originIndex" required><option value="">请选择出发地</option>${M.ORIGINS.map((o, i) => `<option value="${i}" ${m.origin?.name === o.name ? 'selected' : ''}>${o.name}</option>`).join('')}</select></label>
+      <label>出发地<input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="输入上海地点名称"></label><button type="button" class="button light" id="search-origin">搜索地点</button><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">输入地点名称后点击搜索，结果会显示在这里。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" role="status">${m.origin ? `详细地址：${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择地点"}</p>
       <div class="form-grid"><label>交通方式<select name="mode">${['公共交通', '驾车', '步行', '骑行'].map(mode => `<option ${m.mode === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select></label><label>活动偏好<select name="preference">${M.OPTIONS[a.type].map(p => `<option ${m.preference === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label></div>
       <label>人均预算上限（元）<input name="budget" type="number" min="0" max="5000" value="${m.budget}" required></label>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
       <button type="submit" class="button primary full">保存我的需求 ${icon('check')}</button></form>`);
   }
+  document.addEventListener('click',async e=>{
+    const button=e.target.closest('#search-origin');
+    if(!button)return;
+    const form=button.closest('form'),input=form.querySelector('#origin-keyword');
+    const status=form.querySelector('#origin-search-status'),list=form.querySelector('#origin-result');
+    const keyword=input.value.trim();
+    if(!keyword){status.textContent='请先输入地点名称，例如人民广场。';input.focus();return;}
+    button.disabled=true;button.textContent='正在搜索…';list.replaceChildren();
+    status.textContent='正在搜索地点，请稍候…';
+    try{
+      const a=active();
+      const result=await api('/api/locations/search?activityId='+encodeURIComponent(a.id)+'&keyword='+encodeURIComponent(keyword),'GET',null,sessionFor(a.id).token);
+      if(!form.isConnected||!document.getElementById('modal').open)return;
+      if(input.value.trim()!==keyword){status.textContent='搜索词已修改，请重新搜索。';return;}
+      status.textContent=result.items.length?'找到 '+result.items.length+' 个地点，请点击下方地点选择。':'没有找到相关地点，请换一个名称或补充街道信息。';
+      result.items.forEach(p=>{
+        const option=document.createElement('button');option.type='button';option.className='origin-result-item';option.setAttribute('aria-pressed','false');
+        const title=document.createElement('strong'),address=document.createElement('span'),mark=document.createElement('small');
+        title.textContent=p.name;address.textContent=p.address||p.category||'暂无详细地址';mark.textContent='点击选择';
+        option.append(title,address,mark);
+        option.addEventListener('click',()=>{
+          selectedOrigin=p;
+          input.value=p.name;
+          list.replaceChildren();
+          status.textContent='';
+          form.querySelector('#origin-selected').textContent='详细地址：'+(p.address?.trim() || '暂无详细地址');
+          input.focus({preventScroll:true});
+        });
+        list.append(option);
+      });
+    }catch(error){if(form.isConnected)status.textContent='搜索失败：'+error.message+'。请检查后重试。';}
+    finally{button.disabled=false;button.textContent='搜索地点';}
+  });
   function identityOptions() { return `<p class="panel-tip">${isAccount() ? '本次以登录账号参与。活动昵称可单独修改；未完成活动可在最近一次有效操作后 7 天内恢复。' : '本次以游客身份参与，可在最近一次有效操作后 24 小时内从本浏览器恢复。'}</p>`; }
   const defaultNickname = () => {
     const profile = isAccount() ? null : currentProfile() || profiles.list.find(item => item.id === profiles.lastGuestId);
@@ -578,11 +613,10 @@
     openModal('好的相聚，从一句邀请开始', `<p class="modal-intro">活动：${esc(a.title)}</p><div class="invite-code"><small>活动邀请码</small><strong>${a.code}</strong><button class="button light" data-action="copy">${icon('link')} 复制邀请链接</button></div><div class="notice">${isShared(a) ? '把链接发给伙伴，对方可在自己的设备加入这场活动。' : '这是旧版本机示例；请新建活动来体验跨设备协作。'}</div>${a.status === 'voting' ? '<p class="panel-tip">本轮正在投票，成员名单已锁定。</p>' : ''}`);
   }
   function scoreDetails(p) {
-    const a = active();
-    return `<div class="detail-score"><span>演示参考分 · 非约定权重</span><strong>${p.score.toFixed(1)}<small> / 10</small></strong><p>各维度采用 0—10 分。三组分别按公平性、偏好匹配、交通便利性优先排序。</p></div>
-      <div class="dimension-list">${[['fairness', '出行公平性', `最长与最短出行时间相差 ${p.gap} 分钟；演示公式：10 − 时间差 / 8`], ['time', '整体耗时', `全员平均 ${p.average} 分钟；演示公式：10 − 平均用时 / 12`], ['preference', '偏好匹配', '演示匹配模型：活动偏好 60%，示例预算适配 40%；并非甲方约定权重'], ['transit', '交通便利', '内置示例站点便利分，待真实地图数据替换']].map(([key, label, help]) => `<div class="dimension"><div><strong>${label}</strong><span>${p.dimensions[key].toFixed(1)}</span></div><div class="progress-track"><span style="width:${p.dimensions[key] * 10}%"></span></div><p>${help}</p></div>`).join('')}</div>
-      <h3>本轮成员出行比较</h3><div class="member-table-wrap"><table><thead><tr><th>成员</th><th>预计用时</th><th>预计费用</th></tr></thead><tbody>${p.routes.map(r => `<tr><td>${esc(a.members.find(m => m.id === r.memberId)?.name || '已退出成员')}</td><td>${r.minutes} 分钟</td><td>未知</td></tr>`).join('')}</tbody></table></div>
-      <div class="notice">甲方未约定评分权重。本 Demo 使用四维等权均值作为参考分及平票时的本轮综合排序依据，并非已确认的正式算法。路线为直线距离模拟；费用未知，不纳入评分。示例预算不代表真实报价。</div>`;
+    const a=active();
+    return '<div class="detail-score"><span>综合参考分</span><strong>'+p.score.toFixed(1)+'</strong><p>有效维度等权平均；预算无可靠消费数据时不扣分。</p></div>'+
+    '<div>'+Object.entries(p.dimensions).map(([key,value])=>'<p>'+esc(({fairness:'公平性',time:'整体耗时',preference:'偏好匹配',convenience:'便利性'})[key]||key)+'：'+(value==null?'未知':value.toFixed(1))+'</p>').join('')+'</div>'+
+    '<p>'+esc((p.reasons||[]).join('；'))+'</p><table><tr><th>成员</th><th>时间</th><th>费用</th></tr>'+p.routes.map(r=>'<tr><td>'+esc(a.members.find(m=>m.id===r.memberId)?.name||'成员')+'</td><td>'+r.minutes+' 分钟</td><td>'+(r.costStatus==='known'?esc(String(r.cost))+' 元':r.costStatus==='not_applicable'?'不适用':'未知')+'</td></tr>').join('')+'</table><p>仅显示本人和公开位置成员的路线；地图费用为预计费用，驾车油费和停车费未知。</p>';
   }
   function details(id) {
     const p = active().candidates.find(p => p.id === id);
@@ -768,7 +802,7 @@
         history.replaceState(null, '', url);
         closeModal(); render(); requirements();
       } else if (form.getAttribute('id') === 'requirements-form') {
-        if (await run('requirements', { origin: M.ORIGINS[Number(data.get('originIndex'))], mode: data.get('mode'), preference: data.get('preference'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+        if (await run('requirements', { origin: selectedOrigin, mode: data.get('mode'), preference: data.get('preference'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
       } else if (form.getAttribute('id') === 'rename-form') {
         if (await run('rename', { name: data.get('name') }, '昵称已更新')) {
           sessionFor(active().id).name = self().name;

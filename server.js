@@ -20,7 +20,8 @@ async function bodyJson(req, limit = 16_384) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
   catch { const error = new Error('请求内容不是有效 JSON'); error.status = 400; throw error; }
 }
-function createServer(store = openStore()) {
+function createServer(store = openStore(), mapProvider = require('./amap').createAmap()) {
+  mapProvider = require('./map-mock').withMapFaults(mapProvider);
   return http.createServer(async (req, res) => {
   let name;
   try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).slice(1) || 'index.html'; }
@@ -29,6 +30,18 @@ function createServer(store = openStore()) {
     try {
       store.pruneExpiredGuests();
       const token = /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.headers.authorization || '')?.[1];
+      if(name==='api/locations/search'||name==='api/locations/reverse'){
+        const q=new URL(req.url,'http://localhost').searchParams;
+        store.authorizeLocation(q.get('activityId'),token);
+        if(name.endsWith('search')){
+          const keyword=q.get('keyword')?.trim();
+          if(!keyword||keyword.length>80)throw Error('请输入搜索词');
+          return sendJson(res,200,{items:(await mapProvider.search(keyword,null,q.get('city')||'上海')).slice(0,10)});
+        }
+        const lng=Number(q.get('lng')),lat=Number(q.get('lat'));
+        if(!q.has('lng')||!q.has('lat')||!require('./recommendation').valid({lng,lat}))throw Error('坐标无效');
+        return sendJson(res,200,await mapProvider.reverse(lng,lat));
+      }
       if (name === 'api/account/register' && req.method === 'POST') return sendJson(res, 201, store.register(await bodyJson(req)));
       if (name === 'api/account/login' && req.method === 'POST') return sendJson(res, 200, store.login(await bodyJson(req)));
       if (name === 'api/account' && req.method === 'GET') return sendJson(res, 200, store.account(token));
@@ -48,7 +61,10 @@ function createServer(store = openStore()) {
       const match = /^api\/activities\/([0-9a-f-]{36})(\/(requirements|actions))?$/.exec(name);
       if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, store.get(match[1], token));
       if (match && match[3] === 'requirements' && req.method === 'PUT') return sendJson(res, 200, store.requirements(match[1], token, await bodyJson(req)));
-      if (match && match[3] === 'actions' && req.method === 'POST') return sendJson(res, 200, store.act(match[1], token, await bodyJson(req)));
+      if (match && match[3] === 'actions' && req.method === 'POST') {
+        const input=await bodyJson(req);
+        return sendJson(res,200,input.action==='recommend'?await store.recommendLive(match[1],token,mapProvider):store.act(match[1],token,input));
+      }
       return sendJson(res, 404, { error: '接口不存在' });
     } catch (error) { return sendJson(res, error.status || 400, { error: error.message }); }
   }

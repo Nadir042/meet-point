@@ -32,8 +32,12 @@
     { id: 'p6', name: '世纪公园', subtitle: '在开阔的绿意里，开启一场轻松会面', area: '浦东新区 · 锦绣路', lng: 121.5501, lat: 31.2157, tags: ['休闲娱乐'], preference: ['赏风景', '不限'], budget: 0, transit: 8.6, illustration: 'park', line: '地铁 2 / 18 号线', x: 85, y: 65 }
   ];
   const PREFERENCES = ['不限', '聚餐', '逛街', '赏风景'];
-  const OPTIONS = Object.fromEntries(['聚餐', '休闲娱乐', '线下会面'].map(type => [type, PREFERENCES]));
-  const oldPreference = value => ({ '本帮菜': '聚餐', '火锅': '聚餐', '西餐': '聚餐', '户外散步': '赏风景', '学习讨论': '不限', '工作交流': '不限', '朋友会面': '不限' })[value] || value;
+  const OPTIONS = {
+    '聚餐': ['不限','火锅','烧烤','中餐','西餐','咖啡甜品','聚餐'],
+    '休闲娱乐': ['不限','KTV','桌游','电影院','公园','商场','剧本杀','密室逃脱','美甲','手工','写真','拼豆','逛街','赏风景','聚餐'],
+    '线下会面': ['不限','学习讨论','工作交流','朋友会面','安静场所','交通便利','逛街','赏风景','聚餐']
+  };
+  const oldPreference = value => ({ '本帮菜': '聚餐', '户外散步': '赏风景',  })[value] || value;
   const clone = value => JSON.parse(JSON.stringify(value));
   const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const round = n => Math.round(n * 10) / 10;
@@ -262,8 +266,9 @@
         }
         case 'recommend':
           host();
-          a.candidates = recommend(a);
-          a.groups = groupCandidates(a.candidates);
+          a.candidates = data.recommendation ? clone(data.recommendation.candidates) : recommend(a);
+          a.warnings = data.recommendation?.warnings || [];
+          a.groups = data.recommendation ? clone(data.recommendation.groups) : groupCandidates(a.candidates);
           assert(a.candidates.length, '没有适合的候选，请调整活动需求');
           a.requests.filter(r => r.status === 'pending').forEach(r => { r.status = 'approved'; r.handledAt = now; r.handledBy = actorId; r.response = '已按最新需求生成三组候选并开启新轮次'; });
           startRound(a, now);
