@@ -7,3 +7,6 @@ tmp/
 work/
 .env
 .env.*
+
+.impeccable/live/*
+!.impeccable/live/config.json

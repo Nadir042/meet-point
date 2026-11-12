@@ -231,7 +231,9 @@
   async function perform(action, data = {}) {
     if (isShared(active())) {
       const id = active().id;
-      const result = await api(`/api/activities/${id}/actions`, 'POST', { action, data }, sessionFor(id).token);
+      const result = action === 'requirements'
+        ? await api(`/api/activities/${id}/requirements`, 'PUT', data, sessionFor(id).token)
+        : await api(`/api/activities/${id}/actions`, 'POST', { action, data }, sessionFor(id).token);
       acceptShared(result);
     } else replace(M.act(active(), viewer(), action, data));
   }
@@ -314,7 +316,7 @@
     const identityName = profile ? profile.name : '本机示例';
     const navs = [['calendar', '相聚日历'], ['overview', '我的活动'], ['recommend', '集合点推荐'], ['members', '成员与需求'], ['feedback', '意见反馈']];
     return `<header class="site-header">
-      <a class="site-brand" href="#" data-action="view" data-value="calendar" aria-label="MeetPoint 相聚日历"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint</span></a>
+      <a class="site-brand" href="#" data-action="view" data-value="calendar" aria-label="MeetPoint 相聚日历"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint<small>一起选个方便见面的地方</small></span></a>
       <nav id="primary-nav" class="primary-nav ${menuOpen ? 'is-open' : ''}" aria-label="主导航">${navs.map(([id, label]) => `<button class="top-nav-item ${view === id ? 'active' : ''}" ${view === id ? 'aria-current="page"' : ''} data-action="view" data-value="${id}">${label}</button>`).join('')}</nav>
       <div class="header-account"><button class="text-button identity-kind" data-action="identity-info" aria-label="身份与设置：${esc(identityName)}">${identityAvatar(identityName, profiles.activeId)}<span>${esc(identityName)}</span></button></div>
       <button class="menu-toggle button light" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav">菜单</button>
@@ -495,7 +497,7 @@
   }
   function overview() {
     const activities = visibleActivities();
-    return `<div class="page-heading"><div><div class="eyebrow">MAKE ROOM FOR A GOOD TIME</div><h1>每一次相聚，都从这里开始<span class="heading-dot">.</span></h1><p>创建、恢复你的活动，和伙伴一起决定下一站。</p></div><button class="button primary" data-action="create">${icon('plus')} 创建活动</button></div>
+    return `<div class="page-heading"><div><div class="eyebrow">MEET HALFWAY, FEEL CLOSER</div><h1>大家在哪儿见？<span class="heading-dot">.</span></h1><p>告诉我们每个人从哪里出发，一起选出更公平、更方便的集合点。</p></div><button class="button primary" data-action="create">${icon('plus')} 发起一次见面</button></div>
       <div class="overview-actions"><button class="button light" data-action="join">${icon('link')} 使用邀请码加入</button><button class="text-button" data-action="identity-info">${isAccount() ? '我的账号' : '身份设置'}</button>${isAccount() ? '<button class="text-button" data-action="sample-journal">查看示例手账</button>' : '<button class="text-button" data-action="new-profile">＋ 新游客身份</button><button class="text-button" data-action="account-login">注册／登录</button>'}${profiles.activeId === 'examples' ? `<button class="text-button" data-action="sample">${icon('plus')} 新建示例活动</button>` : ''}</div>
       <div class="activity-grid">${activities.map(a => `<article class="panel activity-card"><div class="inline"><span class="activity-symbol">${icon('people')}</span><span class="status">${isShared(a) ? '多人共享' : '本机示例'} · ${statusText(a)}</span></div><h2>${esc(a.title)}</h2><p>${esc(a.date)} ${esc(a.time)} · ${esc(a.type)} · ${a.members.length} 位伙伴</p><div class="stacked-avatars">${a.members.slice(0, 5).map((m, i) => avatar(m, i, true)).join('')}</div><button class="button light full" data-action="open-activity" data-value="${a.id}">进入活动 ${icon('arrow')}</button></article>`).join('') || `<div class="empty-state compact"><p>${isAccount() ? '这个账号还没有参与活动。使用邀请码加入，或创建一场新活动。' : '这个游客身份还没有参与活动。使用邀请码加入，或创建一场新活动。'}</p></div>`}</div><div class="data-note">${isAccount() ? '这里汇总本账号以不同昵称参与的活动。示例手账单独展示，不计入我的活动。' : '当前只显示所选游客身份参与的活动。切换到“本机示例”可查看引导数据；同一浏览器内的游客切换不提供账号级隐私保护。'}</div>`;
   }
@@ -544,6 +546,7 @@
     const dialog = $('#modal');
     dialog.className = wide ? 'wide' : '';
     dialog.innerHTML = `<div class="modal-header"><h2 id="modal-title">${title}</h2><button class="icon-button" data-action="close-modal" aria-label="关闭">${icon('close')}</button></div><div class="modal-body">${body}</div>`;
+    dialog.scrollTop = 0;
     if (!dialog.open) dialog.showModal();
   }
   function closeModal() {
@@ -555,8 +558,8 @@
     selectedOrigin = self()?.origin || null;
     const a = active(), m = self();
     if (!m) return toast('请先加入活动');
-    openModal('我的出行需求', `<p class="modal-intro">从哪里出发，想怎样相聚，都由你来决定。</p><form id="requirements-form">
-      <label>出发地<input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="输入上海地点名称"></label><button type="button" class="button light" id="search-origin">搜索地点</button><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">输入地点名称后点击搜索，结果会显示在这里。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" role="status">${m.origin ? `详细地址：${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择地点"}</p>
+    openModal('我的出行需求', `<p class="modal-intro">先告诉我们你从哪里出发。具体位置是否向伙伴公开，由你决定。</p><form id="requirements-form">
+      <label>出发地<input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="例如：人民广场"></label><div class="origin-actions"><button type="button" class="button light" id="search-origin">搜索地点</button><button type="button" class="button light" id="use-current-location">${icon('pin')} 使用当前位置</button></div><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">搜索地点，或在你同意后使用设备当前位置。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" class="origin-selected" role="status">${m.origin ? `已选择：${esc(m.origin.name)} · ${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择出发地"}</p>
       <div class="form-grid"><label>交通方式<select name="mode">${['公共交通', '驾车', '步行', '骑行'].map(mode => `<option ${m.mode === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select></label><label>活动偏好<select name="preference">${M.OPTIONS[a.type].map(p => `<option ${m.preference === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label></div>
       <label>人均预算上限（元）<input name="budget" type="number" min="0" max="5000" value="${m.budget}" required></label>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
@@ -596,6 +599,28 @@
     }catch(error){if(form.isConnected)status.textContent='搜索失败：'+error.message+'。请检查后重试。';}
     finally{button.disabled=false;button.textContent='搜索地点';}
   });
+  document.addEventListener('click',async e=>{
+    const button=e.target.closest('#use-current-location');
+    if(!button)return;
+    const form=button.closest('form'),input=form.querySelector('#origin-keyword');
+    const status=form.querySelector('#origin-search-status'),list=form.querySelector('#origin-result');
+    if(!navigator.geolocation){status.textContent='当前浏览器不支持定位，请手动搜索出发地。';return;}
+    button.disabled=true;button.textContent='正在定位…';list.replaceChildren();
+    status.textContent='浏览器将询问定位权限；只有你同意后才会读取当前位置。';
+    try{
+      const position=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:false,timeout:10000,maximumAge:60000}));
+      const {longitude:lng,latitude:lat}=position.coords,a=active();
+      const place=await api('/api/locations/reverse?activityId='+encodeURIComponent(a.id)+'&lng='+encodeURIComponent(lng)+'&lat='+encodeURIComponent(lat),'GET',null,sessionFor(a.id).token);
+      if(!form.isConnected||!document.getElementById('modal').open)return;
+      selectedOrigin=place;input.value=place.name;
+      status.textContent='已根据当前位置找到附近地点。';
+      form.querySelector('#origin-selected').textContent='已选择：'+place.name+' · '+(place.address?.trim()||'暂无详细地址');
+    }catch(error){
+      if(!form.isConnected)return;
+      const denied=error?.code===1;
+      status.textContent=denied?'你没有允许定位。可以继续手动搜索出发地。':'当前位置获取失败：'+(error.message||'请稍后重试或手动搜索。');
+    }finally{button.disabled=false;button.innerHTML=icon('pin')+' 使用当前位置';}
+  });
   function identityOptions() { return `<p class="panel-tip">${isAccount() ? '本次以登录账号参与。活动昵称可单独修改；未完成活动可在最近一次有效操作后 7 天内恢复。' : '本次以游客身份参与，可在最近一次有效操作后 24 小时内从本浏览器恢复。'}</p>`; }
   const defaultNickname = () => {
     const profile = isAccount() ? null : currentProfile() || profiles.list.find(item => item.id === profiles.lastGuestId);
@@ -603,10 +628,10 @@
   };
   function create(date = M.dateKey()) {
     if (!M.validDate(date)) date = M.dateKey();
-    openModal('在日历里，约一次见面', `<p class="modal-intro">先留一个日子，再一起决定在哪里相聚。</p><form id="create-form"><label>活动名称<input name="title" maxlength="40" required placeholder="例如：周五下班后的放松小聚"></label><div class="form-grid"><label>聚会日期<input name="date" type="date" value="${date}" required></label><label>见面时间<input name="time" type="time" value="18:30" required></label></div><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}"></label><label>活动类型<select name="type">${Object.keys(M.OPTIONS).map(t => `<option>${t}</option>`).join('')}</select></label>${identityOptions()}<div class="subtle-box">创建后自动保留在当天日历。支持 2—10 人；每位伙伴可使用游客身份或账号参与。</div><button type="submit" class="button primary full">创建并邀请伙伴 ${icon('arrow')}</button></form>`);
+    openModal('发起一次见面', `<p class="modal-intro">先确定时间和活动类型，创建后把邀请链接发给伙伴。</p><form id="create-form"><label>活动名称<input name="title" maxlength="40" required placeholder="例如：周五晚饭见"></label><div class="form-grid"><label>见面日期<input name="date" type="date" value="${date}" required></label><label>见面时间<input name="time" type="time" value="18:30" required></label></div><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}" placeholder="伙伴会看到这个名字"></label><label>这次想做什么<select name="type">${Object.keys(M.OPTIONS).map(t => `<option>${t}</option>`).join('')}</select></label>${identityOptions()}<div class="subtle-box">支持 2—10 人。创建后，大家分别填写出发地和偏好，再一起查看推荐、完成投票。</div><button type="submit" class="button primary full">创建并邀请伙伴 ${icon('arrow')}</button></form>`);
   }
   function join(code = '') {
-    openModal('加入一场相聚', `<p class="modal-intro">打开伙伴发来的邀请链接，或输入 6 位邀请码。投票期间暂不开放新成员加入。</p><form id="join-form"><label>邀请码<input name="code" required maxlength="6" value="${esc(code)}" placeholder="输入 6 位邀请码"></label><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}" placeholder="让伙伴知道你是谁"></label>${identityOptions()}<button class="button primary full" type="submit">加入活动 ${icon('arrow')}</button></form>`);
+    openModal('加入伙伴的活动', `<p class="modal-intro">输入伙伴发来的 6 位邀请码。加入后，先填写你的出行需求。</p><form id="join-form"><label>6 位邀请码<input name="code" required maxlength="6" inputmode="text" autocomplete="one-time-code" value="${esc(code)}" placeholder="例如：MP2026"></label><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}" placeholder="让伙伴知道你是谁"></label>${identityOptions()}<button class="button primary full" type="submit">加入并填写需求 ${icon('arrow')}</button></form>`);
   }
   function invite() {
     const a = active();
