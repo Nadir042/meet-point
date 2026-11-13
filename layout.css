@@ -131,15 +131,9 @@ body[data-surface="landing"]::selection{background:#f26843;color:#fff}
 body.modal-open{overflow:hidden}
 .landing-shell{min-height:100svh;background:#faf9f4;color:#1f191a;isolation:isolate}
 .landing-main{max-width:none;margin:0;padding:0}
-.landing-main>section{transform-origin:50% 0;backface-visibility:hidden}
-@supports (animation-timeline:view()){
-  body[data-surface="landing"] .landing-main>section{animation:landing-page-turn linear both;animation-timeline:view(block);animation-range:entry 0% exit 100%}
-}
-@keyframes landing-page-turn{
-  0%{opacity:.68;transform:perspective(1400px) rotateX(5deg) translateY(4vh)}
-  22%,78%{opacity:1;transform:perspective(1400px) rotateX(0) translateY(0)}
-  100%{opacity:.68;transform:perspective(1400px) rotateX(-5deg) translateY(-4vh)}
-}
+.landing-main>section{position:relative;transform-origin:50% 0;backface-visibility:hidden;scroll-snap-align:start;transform:perspective(1400px) rotateX(var(--page-tilt,0deg)) translateY(var(--page-shift,0px)) scale(var(--page-scale,1));opacity:var(--page-opacity,1);will-change:transform,opacity}
+.landing-main>section+section{border-radius:28px 28px 0 0;box-shadow:0 -34px 72px #1f191a24}
+html:has(body[data-surface="landing"]){scroll-snap-type:y proximity}
 .landing-header{position:sticky;top:0;z-index:60;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;min-height:78px;padding:0 clamp(24px,5vw,76px);border-bottom:1px solid transparent;background:#faf9f400;transition:background-color .25s,border-color .25s,box-shadow .25s,backdrop-filter .25s}
 .landing-scrolled .landing-header{background:#faf9f4d9;border-color:#e5ded7;box-shadow:0 10px 34px #1f191a0a;backdrop-filter:blur(18px) saturate(1.15)}
 .landing-brand{justify-self:start;display:inline-flex;align-items:center;gap:3px;color:#1f191a;font-family:"Arial Rounded MT Bold","Trebuchet MS",sans-serif;font-size:24px;font-weight:800;letter-spacing:-.055em}
@@ -168,9 +162,8 @@ body.modal-open{overflow:hidden}
 .landing-map .map-pins{fill:#6f6865;opacity:.34}
 .landing-map .map-pins .map-destination{fill:#f26843;opacity:.82}
 .landing-hero-copy{position:relative;z-index:1}
-.landing-hero h1{max-width:1100px;margin:0 auto;color:#1f191a;font-family:"Arial Rounded MT Bold","Trebuchet MS",sans-serif;font-size:clamp(3rem,7.2vw,6.75rem);font-weight:900;line-height:.87;letter-spacing:-.06em;text-wrap:balance;text-shadow:0 2px 1px #fff,0 11px 13px #1f191a24,0 32px 48px #1f191a2e;filter:drop-shadow(0 8px 5px #1f191a12);animation:landing-title-float 6.5s cubic-bezier(.45,0,.25,1) infinite;will-change:transform}
+.landing-hero h1{max-width:1100px;margin:0 auto;color:#1f191a;font-family:"Arial Rounded MT Bold","Trebuchet MS",sans-serif;font-size:clamp(3rem,7.2vw,6.75rem);font-weight:900;line-height:.87;letter-spacing:-.06em;text-wrap:balance;text-shadow:0 2px 1px #fff,0 11px 13px #1f191a24,0 32px 48px #1f191a2e;filter:drop-shadow(0 8px 5px #1f191a12)}
 .landing-hero h1 span{display:block}
-@keyframes landing-title-float{0%,100%{transform:translateY(-3px)}50%{transform:translateY(-12px)}}
 .landing-hero-copy>p{margin:18px auto 0;color:#5f5755;font-size:clamp(16px,1.45vw,21px);font-weight:500;letter-spacing:.04em}
 .landing-people{position:relative;width:min(720px,72vw);margin:clamp(18px,2.4vh,30px) 0 14px}
 .landing-people>div{width:100%;aspect-ratio:2.64;overflow:hidden}
@@ -282,8 +275,7 @@ dialog.auth-dialog::backdrop{background:#1f191a66;backdrop-filter:blur(12px) sat
 }
 
 @media(prefers-reduced-motion:reduce){
-  body[data-surface="landing"] .landing-main>section{animation:none}
-  .landing-hero h1{animation:none}
+  body[data-surface="landing"] .landing-main>section{transform:none;opacity:1;will-change:auto}
   .landing-cta,.landing-cta .icon,.landing-register{transition:none}
 }
 @media(max-width:380px){

@@ -611,6 +611,7 @@
     if (appSurface === 'landing') {
       $('#app').innerHTML = landingPage();
       document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+      requestAnimationFrame(updateLandingPageTurn);
       return;
     }
     const a = active();
@@ -1025,8 +1026,42 @@
   $('#modal').addEventListener('click', event => { if (event.target === $('#modal')) { const r = $('#modal').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeModal(); } });
   window.addEventListener('storage', event => { if (event.key === STORAGE_KEY) { state = load(); closeModal(); render(); } });
   window.addEventListener('scroll', () => {
-    if (appSurface === 'landing') document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+    if (appSurface === 'landing') {
+      document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+      scheduleLandingPageTurn();
+    }
   }, { passive: true });
+  let pageTurnFrame = 0;
+  function scheduleLandingPageTurn() {
+    if (pageTurnFrame) return;
+    pageTurnFrame = requestAnimationFrame(updateLandingPageTurn);
+  }
+  function updateLandingPageTurn() {
+    pageTurnFrame = 0;
+    const sections = document.querySelectorAll('.landing-main > section');
+    if (!sections.length) return;
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const viewport = window.innerHeight;
+    const maxTilt = window.innerWidth < 700 ? 11 : 16;
+    for (const section of sections) {
+      if (reduced) {
+        section.style.removeProperty('--page-tilt');
+        section.style.removeProperty('--page-shift');
+        section.style.removeProperty('--page-scale');
+        section.style.removeProperty('--page-opacity');
+        continue;
+      }
+      const bounds = section.getBoundingClientRect();
+      const pageHeight = Math.min(bounds.height, viewport);
+      const distance = Math.max(-1, Math.min(1, (bounds.top + pageHeight / 2 - viewport / 2) / viewport));
+      const depth = Math.abs(distance);
+      section.style.setProperty('--page-tilt', `${distance * maxTilt}deg`);
+      section.style.setProperty('--page-shift', `${distance * 78}px`);
+      section.style.setProperty('--page-scale', String(1 - depth * .08));
+      section.style.setProperty('--page-opacity', String(1 - depth * .34));
+    }
+  }
+  window.addEventListener('resize', scheduleLandingPageTurn, { passive: true });
   function synchronizeTime() {
     let changed = false;
     state.activities = state.activities.map(a => { if (isShared(a)) return a; const next = M.tick(a); if (next.status !== a.status) changed = true; return next; });
