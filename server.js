@@ -3,8 +3,8 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const { openStore } = require('./shared-store');
-const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
-const allowed = new Set(['index.html', 'styles.css', 'journal.css', 'layout.css', 'core.js', 'app.js', 'journal.js', 'media.js', 'assets/autumn.svg', 'assets/cafe.svg', 'assets/lake.svg']);
+const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const allowed = new Set(['index.html', 'styles.css', 'journal.css', 'layout.css', 'core.js', 'app.js', 'journal.js', 'media.js', 'assets/autumn.svg', 'assets/cafe.svg', 'assets/lake.svg', 'assets/landing-people.png']);
 const sendJson = (res, status, body) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(JSON.stringify(body));

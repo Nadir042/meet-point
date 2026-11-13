@@ -10,3 +10,5 @@ work/
 
 .impeccable/live/*
 !.impeccable/live/config.json
+.impeccable/chrome-*/
+.impeccable/review/

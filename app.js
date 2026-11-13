@@ -7,6 +7,7 @@
   const PROFILE_KEY = 'meetpoint-guest-profiles-v1';
   const ACCOUNT_KEY = 'meetpoint-account-session-v1';
   const AVATAR_KEY = 'meetpoint-local-avatars-v1';
+  const invitation = new URL(location.href).searchParams.get('invite')?.trim().slice(0, 6).toUpperCase();
   const sessionKey = (profileId, activityId) => `${profileId}|${activityId}`;
   const sessionActivityId = key => key.split('|').at(-1);
   let sharedSessions = {};
@@ -110,6 +111,7 @@
   }
   try { saveProfiles(); } catch { storageWarning = '浏览器存储不可用，游客身份可能无法恢复。'; }
   let view = profiles.activeId === 'examples' ? 'calendar' : 'overview';
+  let appSurface = accountAuth || invitation ? 'workspace' : 'landing';
   let group = 'fairness';
   let selectedPoi = null;
   let poiContext = null;
@@ -316,7 +318,7 @@
     const identityName = profile ? profile.name : '本机示例';
     const navs = [['calendar', '相聚日历'], ['overview', '我的活动'], ['recommend', '集合点推荐'], ['members', '成员与需求'], ['feedback', '意见反馈']];
     return `<header class="site-header">
-      <a class="site-brand" href="#" data-action="view" data-value="calendar" aria-label="MeetPoint 相聚日历"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint<small>一起选个方便见面的地方</small></span></a>
+      <a class="site-brand" href="#" data-action="landing-home" aria-label="返回 MeetPoint 首页"><span class="brand-mark">${icon('pin')}</span><span>MeetPoint<small>一起选个方便见面的地方</small></span></a>
       <nav id="primary-nav" class="primary-nav ${menuOpen ? 'is-open' : ''}" aria-label="主导航">${navs.map(([id, label]) => `<button class="top-nav-item ${view === id ? 'active' : ''}" ${view === id ? 'aria-current="page"' : ''} data-action="view" data-value="${id}">${label}</button>`).join('')}</nav>
       <div class="header-account"><button class="text-button identity-kind" data-action="identity-info" aria-label="身份与设置：${esc(identityName)}">${identityAvatar(identityName, profiles.activeId)}<span>${esc(identityName)}</span></button></div>
       <button class="menu-toggle button light" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav">菜单</button>
@@ -518,7 +520,82 @@
   function expiredPage() {
     return `<div class="empty-state"><h2>这段未完成的约定，已超过恢复期限</h2><p>游客在最近一次有效操作后 24 小时、演示账号 7 天内可恢复。<br>这里只限制当前身份，伙伴的记录仍然保留。切换其他有效成员，或发起新的活动。</p><button class="button primary" data-action="create">发起新活动</button></div>`;
   }
+  function landingHeader() {
+    const accountActions = accountAuth
+      ? `<button class="landing-register" data-action="landing-enter">进入工作台</button>`
+      : `<button class="landing-nav-link" data-action="account-login">登录</button><button class="landing-register" data-action="account-register">注册</button>`;
+    return `<header class="landing-header">
+      <a class="landing-brand" href="#landing-top" data-action="landing-section" data-value="landing-top" aria-label="MeetPoint 首页"><span>Meet</span><i></i><span>Point</span></a>
+      <nav id="primary-nav" class="landing-nav ${menuOpen ? 'is-open' : ''}" aria-label="首页导航">
+        <button class="landing-nav-link" data-action="landing-section" data-value="about-meetpoint">了解 MeetPoint</button>
+        <button class="landing-nav-link" data-action="landing-section" data-value="how-it-works">使用指南</button>
+        <button class="landing-nav-link" data-action="landing-enter">我的活动</button>
+        <span class="landing-account-actions">${accountActions}</span>
+      </nav>
+      <button class="landing-menu-toggle" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav"><span></span><span></span><span></span><b>菜单</b></button>
+    </header>`;
+  }
+  function landingPage() {
+    return `<div class="landing-shell" id="landing-top">
+      ${landingHeader()}
+      <main class="landing-main">
+        <section class="landing-hero" aria-labelledby="landing-title">
+          <div class="landing-map" aria-hidden="true">
+            <svg viewBox="0 0 1440 760" preserveAspectRatio="none">
+              <path class="map-street" d="M-40 154C160 94 242 236 420 190S720 68 892 155s325 58 590-24"/>
+              <path class="map-street" d="M124 720c54-178 142-220 284-288s250-28 346-144S1008 72 1184-18"/>
+              <path class="map-street fine" d="M-20 520c186-48 270-6 390 68s302 74 438-10 314-132 662-54"/>
+              <path class="map-route" d="M84 632c176-88 268-64 390-26s178-4 246-66"/>
+              <path class="map-route" d="M1324 624c-166-102-278-76-382-26s-152 16-222-58"/>
+              <path class="map-route" d="M118 154c168 54 254 132 356 234s166 108 246 152"/>
+              <path class="map-route" d="M1306 164c-154 44-246 118-344 222s-162 112-242 154"/>
+              <path class="map-route" d="M720 26c-56 122-38 216-4 310s34 142 4 204"/>
+              <circle class="map-origin" cx="84" cy="632" r="5"/><circle class="map-origin" cx="1324" cy="624" r="5"/><circle class="map-origin" cx="118" cy="154" r="5"/><circle class="map-origin" cx="1306" cy="164" r="5"/><circle class="map-origin" cx="720" cy="26" r="5"/>
+              <circle class="map-hub-ring" cx="720" cy="540" r="18"/><circle class="map-hub" cx="720" cy="540" r="7"/>
+            </svg>
+          </div>
+          <div class="landing-glass-orb" aria-hidden="true"></div>
+          <div class="landing-hero-copy">
+            <h1 id="landing-title"><span>WHERE EVERY</span><span>ROUTE MEETS</span></h1>
+            <p>让不同的出发，找到刚刚好的相遇。</p>
+          </div>
+          <figure class="landing-people"><div><img src="./assets/landing-people.png" alt="六位伙伴聚在一起的手绘插画"></div></figure>
+          <button class="landing-cta" data-action="landing-enter">开始使用 ${icon('arrow')}</button>
+          <p class="landing-assurance">真实路线 · 公平推荐 · 一起决定</p>
+        </section>
+
+        <section class="landing-about" id="about-meetpoint" aria-labelledby="about-title">
+          <div class="landing-section-title"><h2 id="about-title">不是找地图中心，<br>是照顾每个人的路。</h2></div>
+          <div class="landing-about-copy">
+            <p>MeetPoint 收集每位伙伴的出发地和出行方式，用真实路线比较时间与便利程度，再把合适的候选地点交给大家共同投票。</p>
+            <dl class="landing-principles">
+              <div><dt>看真实路线</dt><dd>不把几何中点当作公平答案。</dd></div>
+              <div><dt>说清推荐理由</dt><dd>时间、费用与未知信息如实呈现。</dd></div>
+              <div><dt>由大家决定</dt><dd>候选、投票和改票都留在同一场活动里。</dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="landing-guide" id="how-it-works" aria-labelledby="guide-title">
+          <div class="guide-heading"><h2 id="guide-title">从邀请到出发，三步就够了。</h2><p>少一点群聊里的反复比较，多一点对每个人行程的照顾。</p></div>
+          <ol class="guide-steps">
+            <li><span>1</span><div><h3>发起一次见面</h3><p>确定时间和活动类型，把邀请链接发给伙伴。</p></div></li>
+            <li><span>2</span><div><h3>填写各自的路</h3><p>每个人提交出发地、交通方式、偏好和预算。</p></div></li>
+            <li><span>3</span><div><h3>比较，然后一起选</h3><p>看懂推荐依据，投票确定大家都方便的集合点。</p></div></li>
+          </ol>
+          <button class="landing-cta landing-cta-bottom" data-action="landing-enter">开始一次相聚 ${icon('arrow')}</button>
+        </section>
+      </main>
+      <footer class="landing-footer"><a class="landing-brand" href="#landing-top" data-action="landing-section" data-value="landing-top"><span>Meet</span><i></i><span>Point</span></a><p>让每个人，都离相聚更近一点。</p><small>© 2026 neXus team</small></footer>
+    </div>`;
+  }
   function render() {
+    document.body.dataset.surface = appSurface;
+    if (appSurface === 'landing') {
+      $('#app').innerHTML = landingPage();
+      document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+      return;
+    }
     const a = active();
     if (!visibleActivities().some(item => item.id === a.id) && !['calendar', 'overview', 'feedback'].includes(view)) view = 'overview';
     if (!a.members.some(m => m.id === viewer())) state.identities[a.id] = a.hostId;
@@ -541,17 +618,25 @@
       }
     }
   }
-  function openModal(title, body, wide = false) {
-    focusBeforeModal = document.activeElement;
+  function openModal(title, body, wide = false, variant = '') {
     const dialog = $('#modal');
-    dialog.className = wide ? 'wide' : '';
+    const wasOpen = dialog.open;
+    if (!wasOpen) focusBeforeModal = document.activeElement;
+    dialog.className = [wide ? 'wide' : '', variant].filter(Boolean).join(' ');
     dialog.innerHTML = `<div class="modal-header"><h2 id="modal-title">${title}</h2><button class="icon-button" data-action="close-modal" aria-label="关闭">${icon('close')}</button></div><div class="modal-body">${body}</div>`;
     dialog.scrollTop = 0;
-    if (!dialog.open) dialog.showModal();
+    if (!wasOpen) dialog.showModal();
+    document.body.classList.add('modal-open');
+    requestAnimationFrame(() => dialog.querySelector('.modal-body input, .modal-body select, .modal-body textarea, .modal-body button, .modal-header button')?.focus({ preventScroll: true }));
   }
   function closeModal() {
     $('#modal').close();
+    document.body.classList.remove('modal-open');
     if (focusBeforeModal?.isConnected) focusBeforeModal.focus();
+  }
+  function openAccount(mode = 'login') {
+    const registering = mode === 'register';
+    openModal(registering ? '创建 MeetPoint 账号' : '欢迎回到 MeetPoint', `<div class="auth-intro"><p>${registering ? '保存你参与的活动，换一台设备也能继续。' : '登录后继续查看和管理你的相聚活动。'}</p></div><div class="auth-mode" role="tablist" aria-label="账号入口"><button type="button" role="tab" aria-selected="${!registering}" class="${!registering ? 'active' : ''}" data-action="account-login">登录</button><button type="button" role="tab" aria-selected="${registering}" class="${registering ? 'active' : ''}" data-action="account-register">注册</button></div><form id="account-${registering ? 'register' : 'login'}-form" class="auth-form"><label>账号名称<input name="username" minlength="3" maxlength="30" required autocomplete="username" placeholder="3—30 个字符" autofocus></label><label>${registering ? '设置密码' : '密码'}<input name="password" type="password" minlength="8" required autocomplete="${registering ? 'new-password' : 'current-password'}" placeholder="至少 8 位"></label><p class="auth-error" role="alert" aria-live="polite"></p><button class="button primary full auth-submit" type="submit">${registering ? '注册并进入工作台' : '登录并进入工作台'} ${icon('arrow')}</button></form><p class="auth-note">账号仅用于恢复活动记录；出发地是否公开仍由你自己决定。</p>`, false, 'auth-dialog');
   }
   let selectedOrigin = null;
   function requirements() {
@@ -673,6 +758,17 @@
   }
   const actions = {
     view: value => { view = value; selectedPoi = null; menuOpen = false; render(); },
+    'landing-home': () => { appSurface = 'landing'; menuOpen = false; closeModal(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
+    'landing-section': value => {
+      menuOpen = false;
+      $('#primary-nav')?.classList.remove('is-open');
+      $('[data-action="toggle-menu"]')?.setAttribute('aria-expanded', 'false');
+      document.getElementById(value)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+    'landing-enter': () => {
+      if (!accountAuth) return openAccount('login');
+      appSurface = 'workspace'; view = 'overview'; menuOpen = false; window.scrollTo(0, 0); render();
+    },
     create, invite, requirements, details, manage, navigate, join: () => join(),
     'join-current': () => join(active().code),
     'close-modal': closeModal,
@@ -710,14 +806,15 @@
       localStorage.setItem(AVATAR_KEY, JSON.stringify(localAvatars));
       actions['edit-avatar'](); render(); toast('已恢复默认头像');
     },
-    'account-login': () => openModal('登录账号', '<form id="account-login-form"><label>账号名称<input name="username" minlength="3" maxlength="30" required autocomplete="username"></label><label>密码<input name="password" type="password" minlength="8" required autocomplete="current-password"></label><button class="button primary full" type="submit">登录</button></form><button class="text-button" data-action="account-register">还没有账号？注册</button>'),
-    'account-register': () => openModal('注册账号', '<form id="account-register-form"><label>账号名称<input name="username" minlength="3" maxlength="30" required autocomplete="username"></label><label>密码（至少 8 位）<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><button class="button primary full" type="submit">注册并登录</button></form><button class="text-button" data-action="account-login">已有账号？登录</button>'),
+    'account-login': () => openAccount('login'),
+    'account-register': () => openAccount('register'),
     'account-logout': async () => {
       const previous = accountAuth?.previousProfileId;
       try { await api('/api/account/logout', 'POST', {}, accountAuth.token); } catch { /* Local logout still clears this browser. */ }
       for (const key of Object.keys(sharedSessions)) if (key.startsWith(`${profiles.activeId}|`)) delete sharedSessions[key];
       profiles.list = profiles.list.filter(item => item.kind !== 'account');
       accountAuth = null;
+      appSurface = 'landing';
       closeModal(); await selectProfile(profiles.list.some(item => item.id === previous) ? previous : 'examples');
     },
     'sample-journal': () => {
@@ -873,11 +970,19 @@
         closeModal(); await selectProfile(target.id); toast(`活动已归入 ${target.name}`);
       } else if (['account-login-form', 'account-register-form'].includes(form.getAttribute('id'))) {
         const route = form.getAttribute('id') === 'account-register-form' ? 'register' : 'login';
+        const submit = form.querySelector('.auth-submit');
+        const errorMessage = form.querySelector('.auth-error');
+        submit.disabled = true;
+        submit.setAttribute('aria-busy', 'true');
+        submit.dataset.label = submit.innerHTML;
+        submit.textContent = route === 'register' ? '正在创建账号…' : '正在登录…';
+        errorMessage.textContent = '';
         const result = await api(`/api/account/${route}`, 'POST', { username: data.get('username'), password: data.get('password') });
         const previousProfileId = isAccount() ? accountAuth.previousProfileId : profiles.activeId;
         accountAuth = { ...result.account, token: result.token, previousProfileId };
         const id = `account:${result.account.id}`;
         if (!profiles.list.some(item => item.id === id)) profiles.list.push({ id, name: result.account.username, kind: 'account', lastActivityId: null });
+        appSurface = 'workspace';
         closeModal(); await selectProfile(id); toast('账号已登录');
       } else if (form.getAttribute('id') === 'transfer-form') {
         if (await run('transfer', { id: data.get('id') }, '权限已移交，你现在是普通成员')) closeModal();
@@ -887,10 +992,38 @@
         state.feedback.unshift({ id: M.uid(), memberId: viewer(), category: data.get('category'), content: content.slice(0, 1000), at: Date.now() });
         save(); render(); toast('反馈已保存在本浏览器');
       }
-    } catch (error) { toast(error.message); }
+    } catch (error) {
+      if (['account-login-form', 'account-register-form'].includes(form.getAttribute('id'))) {
+        const submit = form.querySelector('.auth-submit');
+        if (submit) {
+          submit.disabled = false;
+          submit.removeAttribute('aria-busy');
+          if (submit.dataset.label) submit.innerHTML = submit.dataset.label;
+        }
+        const message = form.querySelector('.auth-error');
+        if (message) message.textContent = error.message;
+      } else toast(error.message);
+    }
   });
   $('#modal').addEventListener('click', event => { if (event.target === $('#modal')) { const r = $('#modal').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeModal(); } });
   window.addEventListener('storage', event => { if (event.key === STORAGE_KEY) { state = load(); closeModal(); render(); } });
+  window.addEventListener('scroll', () => {
+    if (appSurface === 'landing') document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+  }, { passive: true });
+  let glassFrame = 0;
+  window.addEventListener('pointermove', event => {
+    const hero = appSurface === 'landing' ? $('.landing-hero') : null;
+    if (!hero || !matchMedia('(hover:hover) and (pointer:fine)').matches) return;
+    const bounds = hero.getBoundingClientRect();
+    const inside = event.clientX >= bounds.left && event.clientX <= bounds.right && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
+    hero.classList.toggle('glass-active', inside);
+    if (!inside || glassFrame) return;
+    glassFrame = requestAnimationFrame(() => {
+      hero.style.setProperty('--glass-x', `${event.clientX - bounds.left}px`);
+      hero.style.setProperty('--glass-y', `${event.clientY - bounds.top}px`);
+      glassFrame = 0;
+    });
+  }, { passive: true });
   function synchronizeTime() {
     let changed = false;
     state.activities = state.activities.map(a => { if (isShared(a)) return a; const next = M.tick(a); if (next.status !== a.status) changed = true; return next; });
@@ -908,7 +1041,6 @@
   setInterval(synchronizeTime, 1000);
   setInterval(() => { if (!document.hidden && !$('#modal').open && isShared(active())) refreshShared().catch(error => toast(error.message)); }, 5000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) { synchronizeTime(); if (isShared(active())) refreshShared().catch(error => toast(error.message)); } });
-  const invitation = new URL(location.href).searchParams.get('invite')?.trim().slice(0, 6).toUpperCase();
   if (storageWarning) toast(storageWarning);
   restoreProfile().then(results => {
     const invited = invitation && state.activities.find(a => isShared(a) && a.code === invitation);
@@ -938,6 +1070,7 @@
       for (const key of Object.keys(sharedSessions)) if (key.startsWith(`${profiles.activeId}|`)) delete sharedSessions[key];
       profiles.list = profiles.list.filter(item => item.kind !== 'account');
       accountAuth = null;
+      appSurface = 'landing';
       await selectProfile('examples');
       toast('账号登录已过期，请重新登录');
     } else toast(error.message);
