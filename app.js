@@ -522,17 +522,18 @@
   }
   function landingHeader() {
     const accountActions = accountAuth
-      ? `<button class="landing-register" data-action="landing-enter">进入工作台</button>`
-      : `<button class="landing-nav-link" data-action="account-login">登录</button><button class="landing-register" data-action="account-register">注册</button>`;
+      ? `<button class="landing-workspace" data-action="landing-enter"><span>进入工作台</span>${icon('arrow')}</button>`
+      : `<button class="landing-workspace" data-action="account-login"><span>进入工作台</span>${icon('arrow')}</button><button class="landing-register" data-action="account-register">注册</button>`;
     return `<header class="landing-header">
-      <a class="landing-brand" href="#landing-top" data-action="landing-section" data-value="landing-top" aria-label="MeetPoint 首页"><span>Meet</span><i></i><span>Point</span></a>
-      <nav id="primary-nav" class="landing-nav ${menuOpen ? 'is-open' : ''}" aria-label="首页导航">
-        <button class="landing-nav-link" data-action="landing-section" data-value="about-meetpoint">了解 MeetPoint</button>
-        <button class="landing-nav-link" data-action="landing-section" data-value="how-it-works">使用指南</button>
-        <button class="landing-nav-link" data-action="landing-enter">我的活动</button>
-        <span class="landing-account-actions">${accountActions}</span>
-      </nav>
-      <button class="landing-menu-toggle" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav"><span></span><span></span><span></span><b>菜单</b></button>
+      <div class="landing-header-inner">
+        <a class="landing-brand" href="#landing-top" data-action="landing-section" data-value="landing-top" aria-label="MeetPoint 首页"><span>Meet</span><i></i><span>Point</span></a>
+        <nav id="primary-nav" class="landing-nav ${menuOpen ? 'is-open' : ''}" aria-label="首页导航">
+          <button class="landing-nav-link" data-action="landing-section" data-value="about-meetpoint">了解 MeetPoint</button>
+          <button class="landing-nav-link" data-action="landing-section" data-value="how-it-works">使用指南</button>
+          <span class="landing-account-actions">${accountActions}</span>
+        </nav>
+        <button class="landing-menu-toggle" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav"><span></span><span></span><span></span><b>菜单</b></button>
+      </div>
     </header>`;
   }
   function landingPage() {
@@ -541,8 +542,30 @@
       <main class="landing-main">
         <section class="landing-hero" aria-labelledby="landing-title">
           <div class="landing-map" aria-hidden="true">
-            <img src="./assets/landing-city-v2.png" alt="">
-            <div class="landing-pixels"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+            <svg class="landing-grain-city" viewBox="0 0 1440 760" preserveAspectRatio="xMidYMid slice">
+              <defs>
+                <pattern id="landing-grain" width="13" height="13" patternUnits="userSpaceOnUse" patternTransform="rotate(7)">
+                  <circle cx="2" cy="2" r="1.15"/><circle cx="9" cy="4" r=".7"/><circle cx="5" cy="9" r=".9"/><circle cx="12" cy="11" r=".55"/>
+                </pattern>
+                <linearGradient id="landing-grain-light" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".88"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+                </linearGradient>
+                <mask id="landing-city-mask">
+                  <g fill="#fff">
+                    <path d="M0 720V594h54v-42h46v26h42v-86h62v44h49v-118h74v96h42v-54h58v82h48v-132h68v98h50v-61h62v103h56v-174h74v126h45v-76h54v118h62v-202h70v160h56v-94h61v132h62v-158h68v116h51v-72h67v104h64v-136h65v102h54v-48h72v172Z"/>
+                    <rect x="812" y="245" width="16" height="355"/><rect x="817" y="98" width="6" height="170"/><circle cx="820" cy="322" r="44"/><circle cx="820" cy="468" r="28"/><circle cx="820" cy="235" r="11"/><path d="M788 620 812 520h16l25 100Zm-10 0h86v28h-86Z"/>
+                    <path d="M1006 642q20-274 8-494 66 32 73 494Z"/>
+                    <path d="M922 642 937 222h67l12 420Z"/><path d="m949 222 22-34 22 34Z"/>
+                    <path d="M865 642 879 290h45l12 352Z"/><path d="m887 290 15-52 16 52Z"/>
+                  </g>
+                </mask>
+              </defs>
+              <rect class="city-silhouette" width="1440" height="760" mask="url(#landing-city-mask)"/>
+              <path class="city-river" d="M-40 676C250 604 472 726 720 650S1170 562 1480 638"/>
+              <path class="city-bridge" d="M240 650Q380 554 520 660M252 650H508M1026 628Q1132 548 1240 620M1040 628H1228"/>
+              <rect class="grain-base" width="1440" height="760" fill="url(#landing-grain)" mask="url(#landing-city-mask)"/>
+              <rect class="grain-scan" x="-520" width="460" height="760" fill="url(#landing-grain-light)" mask="url(#landing-city-mask)"/>
+            </svg>
           </div>
           <div class="landing-hero-content">
             <div class="landing-hero-copy">
@@ -556,24 +579,30 @@
         </section>
 
         <section class="landing-about" id="about-meetpoint" aria-labelledby="about-title">
-          <div class="landing-section-title"><h2 id="about-title">不是找地图中心，<br>是照顾每个人的路。</h2></div>
-          <div class="landing-about-copy">
-            <p>MeetPoint 收集每位伙伴的出发地和出行方式，用真实路线比较时间与便利程度，再把合适的候选地点交给大家共同投票。</p>
-            <dl class="landing-principles">
-              <div><dt>看真实路线</dt><dd>不把几何中点当作公平答案。</dd></div>
-              <div><dt>说清推荐理由</dt><dd>时间、费用与未知信息如实呈现。</dd></div>
-              <div><dt>由大家决定</dt><dd>候选、投票和改票都留在同一场活动里。</dd></div>
-            </dl>
+          <figure class="landing-about-illustration"><img src="./assets/landing-routes-complete.png" alt="不同出发点汇聚成共同路线的手绘图"></figure>
+          <div class="landing-about-content">
+            <div class="landing-section-title"><h2 id="about-title">不是找地图中心，<br>是照顾每个人的路。</h2></div>
+            <div class="landing-about-copy">
+              <p>MeetPoint 收集每位伙伴的出发地和出行方式，用真实路线比较时间与便利程度，再把合适的候选地点交给大家共同投票。</p>
+              <dl class="landing-principles">
+                <div><dt>看真实路线</dt><dd>不把几何中点当作公平答案。</dd></div>
+                <div><dt>说清推荐理由</dt><dd>时间、费用与未知信息如实呈现。</dd></div>
+                <div><dt>由大家决定</dt><dd>候选、投票和改票都留在同一场活动里。</dd></div>
+              </dl>
+            </div>
           </div>
         </section>
 
         <section class="landing-guide" id="how-it-works" aria-labelledby="guide-title">
           <div class="guide-heading"><h2 id="guide-title">从邀请到出发，三步就够了。</h2><p>少一点群聊里的反复比较，多一点对每个人行程的照顾。</p></div>
-          <ol class="guide-steps">
-            <li><span>1</span><div><h3>发起一次见面</h3><p>确定时间和活动类型，把邀请链接发给伙伴。</p></div></li>
-            <li><span>2</span><div><h3>填写各自的路</h3><p>每个人提交出发地、交通方式、偏好和预算。</p></div></li>
-            <li><span>3</span><div><h3>比较，然后一起选</h3><p>看懂推荐依据，投票确定大家都方便的集合点。</p></div></li>
-          </ol>
+          <div class="landing-guide-body">
+            <ol class="guide-steps">
+              <li><span>1</span><div><h3>发起一次见面</h3><p>确定时间和活动类型，把邀请链接发给伙伴。</p></div></li>
+              <li><span>2</span><div><h3>填写各自的路</h3><p>每个人提交出发地、交通方式、偏好和预算。</p></div></li>
+              <li><span>3</span><div><h3>比较，然后一起选</h3><p>看懂推荐依据，投票确定大家都方便的集合点。</p></div></li>
+            </ol>
+            <figure class="landing-guide-illustration"><img src="./assets/landing-vote-orange.png" alt="共同投票并确认选择的手绘图"></figure>
+          </div>
           <button class="landing-cta landing-cta-bottom" data-action="landing-enter">开始一次相聚 ${icon('arrow')}</button>
         </section>
       </main>
@@ -584,7 +613,7 @@
     document.body.dataset.surface = appSurface;
     if (appSurface === 'landing') {
       $('#app').innerHTML = landingPage();
-      document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+      syncLandingHeader();
       requestAnimationFrame(updateLandingPageTurn);
       return;
     }
@@ -999,9 +1028,13 @@
   });
   $('#modal').addEventListener('click', event => { if (event.target === $('#modal')) { const r = $('#modal').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeModal(); } });
   window.addEventListener('storage', event => { if (event.key === STORAGE_KEY) { state = load(); closeModal(); render(); } });
+  function syncLandingHeader() {
+    const threshold = matchMedia('(max-width: 700px)').matches ? 96 : 160;
+    document.body.classList.toggle('landing-scrolled', window.scrollY > threshold);
+  }
   window.addEventListener('scroll', () => {
     if (appSurface === 'landing') {
-      document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
+      syncLandingHeader();
       scheduleLandingPageTurn();
     }
   }, { passive: true });
@@ -1035,7 +1068,10 @@
       section.style.setProperty('--page-origin', distance < 0 ? '50% 100%' : '50% 0%');
     }
   }
-  window.addEventListener('resize', scheduleLandingPageTurn, { passive: true });
+  window.addEventListener('resize', () => {
+    if (appSurface === 'landing') syncLandingHeader();
+    scheduleLandingPageTurn();
+  }, { passive: true });
   function synchronizeTime() {
     let changed = false;
     state.activities = state.activities.map(a => { if (isShared(a)) return a; const next = M.tick(a); if (next.status !== a.status) changed = true; return next; });
