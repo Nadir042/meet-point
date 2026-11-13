@@ -15,18 +15,20 @@ Remove the visible blank gap between landing-page sections while preserving the 
 
 ## Pixel Texture
 
-- Add a static, decorative pixel layer inside the hero backdrop only.
-- Use sparse translucent neutral-gray squares between 12 px and 36 px.
-- Concentrate squares around the outer city field and avoid the headline, people illustration, and primary action.
+- Add a static mosaic-interference layer inside the hero backdrop only.
+- Use grouped neutral-gray squares between 24 px and 72 px.
+- Each square must visibly alter the city image beneath it with local blur, reduced contrast, and higher brightness; it must not read as a flat color decoration.
+- Vary block size and strength to create a restrained large-pixel discontinuity rather than a regular grid.
+- Concentrate blocks across the city midground and outer field while avoiding the headline, people illustration, and primary action.
 - Do not animate the squares; the headline float and page turn remain the authored motion.
-- Reduce the number and size of squares on screens below 700 px.
+- Reduce block count and maximum size on screens below 700 px.
 - Keep the texture non-interactive and hidden from assistive technology.
 
 ## Verification
 
 - At desktop and mobile sizes, scroll from the hero into the next section and confirm no blank gap appears.
 - Confirm the page-turn effect still reads as one sheet handing off to the next.
-- Confirm pixel squares are visible at a glance but remain subordinate to the title and people illustration.
+- Confirm the blocks visibly distort the city details beneath them while remaining subordinate to the title and people illustration.
 - Confirm the hero, navigation, login entry, and primary action remain functional.
 
 ## Scope
