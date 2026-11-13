@@ -540,45 +540,16 @@
       ${landingHeader()}
       <main class="landing-main">
         <section class="landing-hero" aria-labelledby="landing-title">
-          <div class="landing-map" aria-hidden="true">
-            <svg viewBox="0 0 1440 760" preserveAspectRatio="none">
-              <defs>
-                <path id="landing-map-pin" d="M0-11a9 9 0 0 0-9 9C-9 5 0 14 0 14S9 5 9-2a9 9 0 0 0-9-9Zm0 6a3.2 3.2 0 1 1 0 6.4A3.2 3.2 0 0 1 0-5Z"/>
-              </defs>
-              <g class="map-districts">
-                <path d="M-24 112 132 66l114 34 72 102-45 89-138 29-112-68Z"/>
-                <path d="m284 58 188 18 94 92-42 119-146 42-86-71 38-91Z"/>
-                <path d="m548 78 206-44 121 72 8 134-110 92-159-29-75-98Z"/>
-                <path d="m902 52 176 40 74 101-58 118-154 38-72-94 34-102Z"/>
-                <path d="m1158 94 171-48 135 94 16 137-112 70-158-37-68-106Z"/>
-                <path d="M25 386 175 332l132 71-8 138-120 99-157-64-49-105Z"/>
-                <path d="m322 372 168-48 109 72-4 135-116 115-147-43-48-119Z"/>
-                <path d="m626 360 176-26 94 88-25 137-133 92-136-61-36-120Z"/>
-                <path d="m930 373 174-48 105 91-18 141-128 85-145-58-39-116Z"/>
-                <path d="m1218 366 159-29 83 88 4 133-102 91-139-51-57-115Z"/>
-              </g>
-              <path class="map-river" d="M-40 350c170-76 306-37 426 31s234 57 348-8 249-72 359-12 221 95 389 20"/>
-              <path class="map-street" d="M-40 154C160 94 242 236 420 190S720 68 892 155s325 58 590-24"/>
-              <path class="map-street" d="M124 720c54-178 142-220 284-288s250-28 346-144S1008 72 1184-18"/>
-              <path class="map-street fine" d="M-20 520c186-48 270-6 390 68s302 74 438-10 314-132 662-54"/>
-              <path class="map-route" d="M84 632c176-88 268-64 390-26s178-4 246-66"/>
-              <path class="map-route" d="M1324 624c-166-102-278-76-382-26s-152 16-222-58"/>
-              <path class="map-route" d="M118 154c168 54 254 132 356 234s166 108 246 152"/>
-              <path class="map-route" d="M1306 164c-154 44-246 118-344 222s-162 112-242 154"/>
-              <path class="map-route" d="M720 26c-56 122-38 216-4 310s34 142 4 204"/>
-              <g class="map-pins">
-                <use href="#landing-map-pin" transform="translate(84 632)"/><use href="#landing-map-pin" transform="translate(1324 624)"/><use href="#landing-map-pin" transform="translate(118 154)"/><use href="#landing-map-pin" transform="translate(1306 164)"/><use href="#landing-map-pin" transform="translate(720 26)"/>
-                <use class="map-destination" href="#landing-map-pin" transform="translate(720 540) scale(1.25)"/>
-              </g>
-            </svg>
+          <div class="landing-map" aria-hidden="true"><img src="./assets/landing-city-v2.png" alt=""></div>
+          <div class="landing-hero-content">
+            <div class="landing-hero-copy">
+              <h1 id="landing-title"><span>WHERE EVERY</span><span>ROUTE MEETS</span></h1>
+              <p>让不同的出发，找到刚刚好的相遇。</p>
+            </div>
+            <figure class="landing-people"><div><img src="./assets/landing-people.png" alt="六位伙伴聚在一起的手绘插画"></div></figure>
+            <button class="landing-cta" data-action="landing-enter">开始使用 ${icon('arrow')}</button>
+            <p class="landing-assurance">真实路线 · 公平推荐 · 一起决定</p>
           </div>
-          <div class="landing-hero-copy">
-            <h1 id="landing-title"><span>WHERE EVERY</span><span>ROUTE MEETS</span></h1>
-            <p>让不同的出发，找到刚刚好的相遇。</p>
-          </div>
-          <figure class="landing-people"><div><img src="./assets/landing-people.png" alt="六位伙伴聚在一起的手绘插画"></div></figure>
-          <button class="landing-cta" data-action="landing-enter">开始使用 ${icon('arrow')}</button>
-          <p class="landing-assurance">真实路线 · 公平推荐 · 一起决定</p>
         </section>
 
         <section class="landing-about" id="about-meetpoint" aria-labelledby="about-title">

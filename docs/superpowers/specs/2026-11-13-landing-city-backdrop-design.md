@@ -17,7 +17,7 @@ Replace the hero's abstract route map with an original Shanghai-inspired miniatu
 - Move the hero's visible content down by 56 px on desktop so the sticky header no longer overlaps the headline.
 - Use a 28 px offset on mobile to protect limited vertical space.
 - Keep the headline above both the city backdrop and the people illustration.
-- Strengthen the headline's static floating effect with a close highlight, a short contact shadow, and a softer distant shadow. Do not add continuous bobbing motion.
+- Strengthen the headline's floating effect with a close highlight, a short contact shadow, and a softer distant shadow. Add a slow 6 px vertical float, with a reduced-motion fallback.
 
 ## Responsive Behavior
 
