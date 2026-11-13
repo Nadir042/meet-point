@@ -58,6 +58,17 @@
   function member(name, originIndex = null, mode = '公共交通', preference = '不限', budget = 150, shared = false) {
     return { id: uid(), name, origin: originIndex === null ? null : clone(ORIGINS[originIndex]), mode, preference, budget, shared };
   }
+  function navigationUrl(origin, destination, mode) {
+    const modes = { '公共交通': 'bus', '驾车': 'car', '步行': 'walk', '骑行': 'ride' };
+    assert(origin && destination && [origin.lng, origin.lat, destination.lng, destination.lat].every(Number.isFinite), '路线地点无效');
+    assert(modes[mode], '交通方式无效');
+    const params = new URLSearchParams({
+      from: `${origin.lng},${origin.lat},${origin.name || ''}`,
+      to: `${destination.lng},${destination.lat},${destination.name || ''}`,
+      mode: modes[mode], policy: '1', src: 'MeetPoint', coordinate: 'gaode', callnative: '0'
+    });
+    return `https://uri.amap.com/navigation?${params}`;
+  }
   function createActivity(title, nickname, type = '聚餐', now = Date.now(), options = {}) {
     assert(title.trim() && nickname.trim(), '请填写活动名称和昵称');
     assert(OPTIONS[type], '请选择有效的活动类型');
@@ -80,6 +91,11 @@
       m.origin && Number.isFinite(m.origin.lng) && Number.isFinite(m.origin.lat) &&
       ['公共交通', '驾车', '步行', '骑行'].includes(m.mode) &&
       m.preference && Number.isFinite(m.budget) && m.budget >= 0);
+  }
+  function recommendationProgress(a) {
+    const total = a.members.length;
+    const readyCount = a.members.filter(member => member.ready || member.origin).length;
+    return { total, readyCount, stage: total < 2 ? 'members' : readyCount < total ? 'requirements' : 'ready' };
   }
   function rankedPlaces(a) {
     assert(ready(a), '需要 2—10 名成员，且每个人都已填写出行需求');
@@ -351,7 +367,7 @@
       return a;
     });
   }
-  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, recommend, tally, tick, act, visibleMembers, seed, seedMemories, uid };
+  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, recommendationProgress, navigationUrl, recommend, tally, tick, act, visibleMembers, seed, seedMemories, uid };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MeetPoint = api;
 })(typeof window !== 'undefined' ? window : globalThis);

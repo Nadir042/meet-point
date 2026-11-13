@@ -260,6 +260,46 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if (!row) fail(404, '照片文件不存在');
       return row;
     },
+    replaceDemoAccount(input) {
+      const { username, password } = accountInput(input);
+      const marker = typeof input?.marker === 'string' ? input.marker : '';
+      const entries = Array.isArray(input?.entries) ? input.entries : [];
+      if (!marker || !entries.length) fail(400, '演示数据无效');
+      return withWrite(() => {
+        const existing = findAccount.get(username);
+        if (existing) {
+          const rows = db.prepare(`SELECT a.id, a.payload FROM account_memberships m
+            JOIN activities a ON a.id = m.activity_id WHERE m.account_id = ?`).all(existing.id);
+          if (!rows.length || rows.some(row => JSON.parse(row.payload).demoSeed !== marker))
+            fail(409, '同名账号不是可替换的演示账号，已停止写入');
+          for (const row of rows) {
+            db.prepare('DELETE FROM photos WHERE activity_id = ?').run(row.id);
+            db.prepare('DELETE FROM sessions WHERE activity_id = ?').run(row.id);
+            db.prepare('DELETE FROM account_memberships WHERE activity_id = ?').run(row.id);
+            db.prepare('DELETE FROM activities WHERE id = ?').run(row.id);
+          }
+          db.prepare('DELETE FROM account_sessions WHERE account_id = ?').run(existing.id);
+          db.prepare('DELETE FROM accounts WHERE id = ?').run(existing.id);
+        }
+
+        const accountId = randomUUID(), salt = randomBytes(16).toString('hex');
+        db.prepare('INSERT INTO accounts VALUES (?, ?, ?, ?)').run(
+          accountId, username, salt, scryptSync(password, salt, 64).toString('hex')
+        );
+        const codes = new Set();
+        for (const entry of entries) {
+          const activity = M.migrate(entry?.activity);
+          if (activity.demoSeed !== marker || !activity.members.some(member => member.id === entry.viewerId))
+            fail(400, '演示活动身份无效');
+          while (codes.has(activity.code) || findByCode.get(activity.code))
+            activity.code = randomBytes(3).toString('hex').toUpperCase();
+          codes.add(activity.code);
+          insert.run(activity.id, activity.code, JSON.stringify(activity));
+          db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, activity.id, entry.viewerId);
+        }
+        return { username, activities: entries.length };
+      });
+    },
     close() { db.close(); }
   };
 }

@@ -10,6 +10,21 @@ function prepared() {
   for (const [i, m] of a.members.entries()) a = M.act(a, m.id, 'requirements', { origin: M.ORIGINS[i], mode: '公共交通', preference: '不限', budget: 100, shared: i === 0 }, NOW);
   return a;
 }
+test('navigation URLs preserve endpoints and translate every supported travel mode', () => {
+  const origin={name:'徐家汇',lng:121.4365,lat:31.1956};
+  const destination={name:'新天地',lng:121.4752,lat:31.2194};
+  for (const [mode,expected] of [['公共交通','bus'],['驾车','car'],['步行','walk'],['骑行','ride']]) {
+    const url=new URL(M.navigationUrl(origin,destination,mode));
+    assert.equal(url.origin,'https://uri.amap.com');
+    assert.equal(url.pathname,'/navigation');
+    assert.equal(url.searchParams.get('from'),'121.4365,31.1956,徐家汇');
+    assert.equal(url.searchParams.get('to'),'121.4752,31.2194,新天地');
+    assert.equal(url.searchParams.get('mode'),expected);
+    assert.equal(url.searchParams.get('coordinate'),'gaode');
+    assert.equal(url.searchParams.get('src'),'MeetPoint');
+  }
+  assert.throws(()=>M.navigationUrl(origin,destination,'飞行'),/交通方式/);
+});
 test('create, join, complete requirements and open a 24-hour round', () => {
   let a = prepared();
   assert.equal(M.ready(a), true);

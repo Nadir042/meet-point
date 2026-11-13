@@ -19,6 +19,11 @@ function withMapFaults(provider, mode=process.env.MAP_MOCK){
       }
       const r=await provider.route(origin,destination,travelMode,...rest);
       return mode==='nocost'&&travelMode==='公共交通'?{...r,cost:null,costStatus:'unavailable',costSource:null}:r;
+    },
+    async staticMap(...args){
+      if(mode==='timeout')throw fail('MAP_TIMEOUT','测试：地图超时',true);
+      if(mode==='quota')throw fail('MAP_QUOTA_EXCEEDED','测试：地图配额不足');
+      return provider.staticMap(...args);
     }
   };
 }

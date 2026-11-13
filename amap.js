@@ -45,6 +45,33 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch}={}){
       const cost=rawCost!==null&&rawCost>=0?rawCost:null;
       if(Number(r.duration)<0||Number(r.distance)<0)throw fail('ROUTES_UNAVAILABLE','路线数据无效',true);
       return {costSource:cost!==null?'amap.transit.cost':null,minutes:Math.ceil(Number(r.duration)/60),distanceMeters:Number(r.distance),cost,costStatus:mode==='公共交通'?(cost===null?'unavailable':'known'):mode==='驾车'?'unknown':'not_applicable',transfers:Math.max(0,(r.segments||[]).filter(s=>s.bus?.buslines?.length).length-1)};
+    },
+    async staticMap(points,{width=640,height=350}={},signal){
+      if(!key)throw fail('MAP_PROVIDER_ERROR','请配置后端 AMAP_KEY');
+      const places=(points||[]).filter(p=>Number.isFinite(p?.lng)&&Number.isFinite(p?.lat)).slice(0,3);
+      if(!places.length)throw fail('NO_CANDIDATES','暂无可展示的候选地点');
+      const size=`${Math.max(200,Math.min(1024,Math.round(width)))}*${Math.max(200,Math.min(1024,Math.round(height)))}`;
+      const markers=places.map((p,index)=>`large,0x1F191A,${/^[0-9A-Z]$/.test(p.label)?p.label:String(index+1)}:${Number(p.lng).toFixed(6)},${Number(p.lat).toFixed(6)}`).join('|');
+      const url=new URL('https://restapi.amap.com/v3/staticmap');
+      url.search=new URLSearchParams({size,scale:'2',markers,key});
+      try{
+        const timeout=AbortSignal.timeout(5000);
+        const response=await fetchImpl(url,{signal:signal?AbortSignal.any([signal,timeout]):timeout});
+        if(!response.ok)throw fail('MAP_PROVIDER_ERROR','地图图片请求失败',true);
+        const contentType=(response.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+        if(!contentType.startsWith('image/')){
+          let code='UNKNOWN';
+          try{const body=await response.json();code=String(body.infocode??body.errcode??'UNKNOWN');}catch{}
+          throw fail(['10003','10044'].includes(code)?'MAP_QUOTA_EXCEEDED':'MAP_PROVIDER_ERROR',code==='10003'?'今日地图调用配额已用尽':'地图图片暂时不可用',false);
+        }
+        const body=Buffer.from(await response.arrayBuffer());
+        if(!body.length||body.length>5*1024*1024)throw fail('MAP_PROVIDER_ERROR','地图图片响应无效',true);
+        return {body,contentType};
+      }catch(e){
+        if(['TimeoutError','AbortError'].includes(e.name))throw fail('MAP_TIMEOUT','地图图片加载超时',true);
+        if(e.code)throw e;
+        throw fail('MAP_PROVIDER_ERROR','地图图片连接失败，请稍后重试',true);
+      }
     }
   };
 }

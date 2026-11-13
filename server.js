@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { openStore } = require('./shared-store');
 const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
-const allowed = new Set(['index.html', 'styles.css', 'journal.css', 'layout.css', 'core.js', 'app.js', 'journal.js', 'media.js', 'assets/autumn.svg', 'assets/cafe.svg', 'assets/lake.svg', 'assets/landing-people.png', 'assets/landing-routes.png', 'assets/landing-routes-complete.png', 'assets/landing-vote.png', 'assets/landing-vote-orange.png']);
+const allowed = new Set(['index.html', 'styles.css', 'journal.css', 'layout.css', 'core.js', 'app.js', 'journal.js', 'media.js', 'assets/autumn.svg', 'assets/cafe.svg', 'assets/lake.svg', 'assets/landing-people.png', 'assets/landing-routes.png', 'assets/landing-routes-complete.png', 'assets/landing-vote.png', 'assets/landing-vote-orange.png', 'assets/landing-vote-black.png', 'assets/landing-city-paris.png', 'assets/landing-city-sydney.png', 'assets/workspace-graduate.png', 'assets/workspace-idea.png', 'assets/workspace-ticket.png', 'assets/calendar-companion.png', 'assets/members-meeting.png', 'assets/recommend-companion.png', 'assets/feedback-idea.png']);
 const sendJson = (res, status, body) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(JSON.stringify(body));
@@ -22,6 +22,7 @@ async function bodyJson(req, limit = 16_384) {
 }
 function createServer(store = openStore(), mapProvider = require('./amap').createAmap()) {
   mapProvider = require('./map-mock').withMapFaults(mapProvider);
+  const staticMapCache = new Map();
   return http.createServer(async (req, res) => {
   let name;
   try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).slice(1) || 'index.html'; }
@@ -58,6 +59,30 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         res.writeHead(200, { 'Content-Type': record.mime, 'Content-Length': record.data.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
         return res.end(record.data);
       }
+      const staticMap = /^api\/activities\/([0-9a-f-]{36})\/static-map$/.exec(name);
+      if (staticMap && req.method === 'GET') {
+        const group = new URL(req.url, 'http://localhost').searchParams.get('group') || 'fairness';
+        if (!['fairness', 'preference', 'convenience'].includes(group)) { const error = new Error('推荐分组无效'); error.status = 400; throw error; }
+        const activity = store.get(staticMap[1], token).activity;
+        let ids = [...(activity.groups[group] || [])].slice(0, 3);
+        if (activity.winningCandidateId && !ids.includes(activity.winningCandidateId)) ids = [activity.winningCandidateId, ...ids].slice(0, 3);
+        const points = ids.map(id => activity.candidates.find(candidate => candidate.id === id)).filter(candidate => candidate && Number.isFinite(candidate.lng) && Number.isFinite(candidate.lat));
+        if (!points.length) { const error = new Error('暂无可展示的候选地点'); error.status = 404; throw error; }
+        if (typeof mapProvider.staticMap !== 'function') { const error = new Error('地图图片服务尚未配置'); error.status = 503; throw error; }
+        const cacheKey = JSON.stringify(['static-map-v3', ...points.map(point => [point.id, point.lng, point.lat])]);
+        let entry = staticMapCache.get(cacheKey);
+        if (!entry || entry.expiresAt <= Date.now()) {
+          const request = mapProvider.staticMap(points.map((point, index) => ({...point,label:String(index + 1)})));
+          entry = {request,expiresAt:Date.now()+5*60*1000};
+          staticMapCache.set(cacheKey,entry);
+          if (staticMapCache.size > 100) staticMapCache.delete(staticMapCache.keys().next().value);
+        }
+        let image;
+        try { image = entry.image || await entry.request; entry.image = image; }
+        catch (error) { staticMapCache.delete(cacheKey); throw error; }
+        res.writeHead(200, { 'Content-Type': image.contentType, 'Content-Length': image.body.length, 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(image.body);
+      }
       const match = /^api\/activities\/([0-9a-f-]{36})(\/(requirements|actions))?$/.exec(name);
       if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, store.get(match[1], token));
       if (match && match[3] === 'requirements' && req.method === 'PUT') return sendJson(res, 200, store.requirements(match[1], token, await bodyJson(req)));
@@ -66,7 +91,10 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         return sendJson(res,200,input.action==='recommend'?await store.recommendLive(match[1],token,mapProvider):store.act(match[1],token,input));
       }
       return sendJson(res, 404, { error: '接口不存在' });
-    } catch (error) { return sendJson(res, error.status || 400, { error: error.message }); }
+    } catch (error) {
+      const status = error.status || ({ MAP_TIMEOUT: 504, MAP_QUOTA_EXCEEDED: 429, MAP_PROVIDER_ERROR: 502 }[error.code]) || 400;
+      return sendJson(res, status, { error: error.message, ...(error.code ? { code: error.code, retryable: !!error.retryable } : {}) });
+    }
   }
   if (!allowed.has(name)) { res.writeHead(404); return res.end('Not found'); }
   if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405); return res.end(); }
