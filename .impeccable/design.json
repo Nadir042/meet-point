@@ -7,14 +7,14 @@
       "coral-action": {
         "role": "primary",
         "displayName": "会面珊瑚橙",
-        "canonical": "#EF4434",
-        "tonalRamp": ["#48120D", "#762019", "#A62D22", "#D6382B", "#EF4434", "#F4776B", "#F9AAA2", "#FDE0DD"]
+        "canonical": "#F26843",
+        "tonalRamp": ["#492014", "#74311F", "#A14528", "#D95732", "#F26843", "#F58A6C", "#F9B9A5", "#FDE4DA"]
       },
       "coral-action-deep": {
         "role": "primary",
         "displayName": "深珊瑚橙",
-        "canonical": "#D6382B",
-        "tonalRamp": ["#43110D", "#6A1B15", "#94261E", "#B92F25", "#D6382B", "#E86C61", "#F4AAA4", "#FBE1DE"]
+        "canonical": "#D95732",
+        "tonalRamp": ["#421A0F", "#6B2918", "#963A22", "#BC492A", "#D95732", "#E97B5D", "#F4B09C", "#FBE1D7"]
       },
       "ink-warm": {
         "role": "neutral",
@@ -69,7 +69,7 @@
       "refersTo": "button-primary",
       "description": "每个视区最重要的下一步操作。",
       "html": "<button class=\"ds-btn-primary\">创建活动</button>",
-      "css": ".ds-btn-primary{min-height:44px;padding:12px 20px;border:0;border-radius:12px;background:#EF4434;color:#fff;font:600 14px/1.4 'PingFang SC','Microsoft YaHei',sans-serif;transition:background 160ms ease-out}.ds-btn-primary:hover{background:#D6382B}.ds-btn-primary:active{background:#B92F25}.ds-btn-primary:focus-visible{outline:3px solid #1F191A;outline-offset:3px}"
+      "css": ".ds-btn-primary{min-height:44px;padding:12px 20px;border:0;border-radius:12px;background:#F26843;color:#fff;font:600 14px/1.4 'PingFang SC','Microsoft YaHei',sans-serif;transition:background 160ms ease-out}.ds-btn-primary:hover{background:#D95732}.ds-btn-primary:active{background:#BC492A}.ds-btn-primary:focus-visible{outline:3px solid #1F191A;outline-offset:3px}"
     },
     {
       "name": "Secondary Button",
@@ -77,7 +77,7 @@
       "refersTo": "button-secondary",
       "description": "次要、返回和补充操作。",
       "html": "<button class=\"ds-btn-secondary\">查看推荐理由</button>",
-      "css": ".ds-btn-secondary{min-height:44px;padding:12px 20px;border:1px solid #E5DED7;border-radius:12px;background:#fff;color:#1F191A;font:600 14px/1.4 'PingFang SC','Microsoft YaHei',sans-serif;transition:border-color 160ms ease-out,background 160ms ease-out}.ds-btn-secondary:hover{border-color:#EF4434;background:#FAF9F4}.ds-btn-secondary:active{background:#F4EFEA}.ds-btn-secondary:focus-visible{outline:3px solid #EF4434;outline-offset:3px}"
+      "css": ".ds-btn-secondary{min-height:44px;padding:12px 20px;border:1px solid #E5DED7;border-radius:12px;background:#fff;color:#1F191A;font:600 14px/1.4 'PingFang SC','Microsoft YaHei',sans-serif;transition:border-color 160ms ease-out,background 160ms ease-out}.ds-btn-secondary:hover{border-color:#F26843;background:#FAF9F4}.ds-btn-secondary:active{background:#F4EFEA}.ds-btn-secondary:focus-visible{outline:3px solid #F26843;outline-offset:3px}"
     },
     {
       "name": "Location Input",
@@ -85,14 +85,14 @@
       "refersTo": "input",
       "description": "地点搜索及常规表单输入。",
       "html": "<label class=\"ds-field\"><span>你的出发地</span><input placeholder=\"例如：人民广场\"></label>",
-      "css": ".ds-field{display:grid;gap:8px;color:#1F191A;font:600 13px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-field input{min-height:44px;padding:12px 14px;border:1px solid #E5DED7;border-radius:12px;background:#fff;color:#1F191A;font:400 16px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-field input:hover{border-color:#B8AAA2}.ds-field input:focus{outline:3px solid rgba(239,68,52,.22);border-color:#EF4434}.ds-field input::placeholder{color:#8A8280}"
+      "css": ".ds-field{display:grid;gap:8px;color:#1F191A;font:600 13px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-field input{min-height:44px;padding:12px 14px;border:1px solid #E5DED7;border-radius:12px;background:#fff;color:#1F191A;font:400 16px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-field input:hover{border-color:#B8AAA2}.ds-field input:focus{outline:3px solid rgba(242,104,67,.22);border-color:#F26843}.ds-field input::placeholder{color:#8A8280}"
     },
     {
       "name": "Status Chip",
       "kind": "chip",
       "description": "活动、投票或推荐状态。",
       "html": "<span class=\"ds-chip\">等待伙伴填写</span>",
-      "css": ".ds-chip{display:inline-flex;align-items:center;min-height:28px;padding:5px 10px;border:1px solid #E5DED7;border-radius:10px;background:#FAF9F4;color:#6F6865;font:600 12px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-chip:focus-visible{outline:3px solid #EF4434;outline-offset:2px}"
+      "css": ".ds-chip{display:inline-flex;align-items:center;min-height:28px;padding:5px 10px;border:1px solid #E5DED7;border-radius:10px;background:#FAF9F4;color:#6F6865;font:600 12px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-chip:focus-visible{outline:3px solid #F26843;outline-offset:2px}"
     },
     {
       "name": "Recommendation Card",
@@ -100,14 +100,14 @@
       "refersTo": "card",
       "description": "展示候选地点、路线指标和投票入口。",
       "html": "<article class=\"ds-card\"><span>最公平 · 第 1 名</span><h3>人民广场</h3><p>大家的通勤时间差最小，预计平均 34 分钟。</p><strong>公平度 92</strong></article>",
-      "css": ".ds-card{display:grid;gap:10px;padding:24px;border:1px solid #E5DED7;border-radius:16px;background:#fff;color:#1F191A;box-shadow:0 6px 24px rgba(31,25,26,.06);font-family:'PingFang SC','Microsoft YaHei',sans-serif}.ds-card span{color:#EF4434;font-size:12px;font-weight:600}.ds-card h3{margin:0;font-size:20px;line-height:1.4}.ds-card p{margin:0;color:#6F6865;font-size:14px;line-height:1.7}.ds-card strong{font-size:18px}.ds-card:hover{border-color:#D9CEC6}.ds-card:focus-within{outline:3px solid rgba(239,68,52,.22);outline-offset:3px}"
+      "css": ".ds-card{display:grid;gap:10px;padding:24px;border:1px solid #E5DED7;border-radius:16px;background:#fff;color:#1F191A;box-shadow:0 6px 24px rgba(31,25,26,.06);font-family:'PingFang SC','Microsoft YaHei',sans-serif}.ds-card span{color:#D95732;font-size:12px;font-weight:600}.ds-card h3{margin:0;font-size:20px;line-height:1.4}.ds-card p{margin:0;color:#6F6865;font-size:14px;line-height:1.7}.ds-card strong{font-size:18px}.ds-card:hover{border-color:#D9CEC6}.ds-card:focus-within{outline:3px solid rgba(242,104,67,.22);outline-offset:3px}"
     },
     {
       "name": "Top Navigation",
       "kind": "nav",
       "description": "桌面端的主要页面导航。",
       "html": "<nav class=\"ds-nav\"><a class=\"is-active\" href=\"#\">推荐地点</a><a href=\"#\">成员需求</a><a href=\"#\">活动记录</a></nav>",
-      "css": ".ds-nav{display:flex;gap:8px;padding:8px;border-bottom:1px solid #E5DED7;background:#FAF9F4;font-family:'PingFang SC','Microsoft YaHei',sans-serif}.ds-nav a{padding:10px 12px;border-radius:10px;color:#6F6865;text-decoration:none;font-size:14px;font-weight:600}.ds-nav a:hover{background:#fff;color:#1F191A}.ds-nav a.is-active{background:#fff;color:#1F191A;box-shadow:inset 0 -2px #EF4434}.ds-nav a:focus-visible{outline:3px solid #EF4434;outline-offset:2px}"
+      "css": ".ds-nav{display:flex;gap:8px;padding:8px;border-bottom:1px solid #E5DED7;background:#FAF9F4;font-family:'PingFang SC','Microsoft YaHei',sans-serif}.ds-nav a{padding:10px 12px;border-radius:10px;color:#6F6865;text-decoration:none;font-size:14px;font-weight:600}.ds-nav a:hover{background:#fff;color:#1F191A}.ds-nav a.is-active{background:#fff;color:#1F191A;box-shadow:inset 0 -2px #F26843}.ds-nav a:focus-visible{outline:3px solid #F26843;outline-offset:2px}"
     }
   ],
   "narrative": {

@@ -2,8 +2,8 @@
 name: MeetPoint
 description: 让校园伙伴轻松选出对大家都方便的集合点
 colors:
-  coral-action: "#EF4434"
-  coral-action-deep: "#D6382B"
+  coral-action: "#F26843"
+  coral-action-deep: "#D95732"
   ink-warm: "#1F191A"
   ink-muted: "#6F6865"
   paper-cream: "#FAF9F4"
