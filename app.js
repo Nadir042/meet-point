@@ -572,7 +572,6 @@
               </g>
             </svg>
           </div>
-          <div class="landing-glass-orb" aria-hidden="true"></div>
           <div class="landing-hero-copy">
             <h1 id="landing-title"><span>WHERE EVERY</span><span>ROUTE MEETS</span></h1>
             <p>让不同的出发，找到刚刚好的相遇。</p>
@@ -1027,20 +1026,6 @@
   window.addEventListener('storage', event => { if (event.key === STORAGE_KEY) { state = load(); closeModal(); render(); } });
   window.addEventListener('scroll', () => {
     if (appSurface === 'landing') document.body.classList.toggle('landing-scrolled', window.scrollY > 18);
-  }, { passive: true });
-  let glassFrame = 0;
-  window.addEventListener('pointermove', event => {
-    const hero = appSurface === 'landing' ? $('.landing-hero') : null;
-    if (!hero || !matchMedia('(hover:hover) and (pointer:fine)').matches) return;
-    const bounds = hero.getBoundingClientRect();
-    const inside = event.clientX >= bounds.left && event.clientX <= bounds.right && event.clientY >= bounds.top && event.clientY <= bounds.bottom;
-    hero.classList.toggle('glass-active', inside);
-    if (!inside || glassFrame) return;
-    glassFrame = requestAnimationFrame(() => {
-      hero.style.setProperty('--glass-x', `${event.clientX - bounds.left}px`);
-      hero.style.setProperty('--glass-y', `${event.clientY - bounds.top}px`);
-      glassFrame = 0;
-    });
   }, { passive: true });
   function synchronizeTime() {
     let changed = false;
