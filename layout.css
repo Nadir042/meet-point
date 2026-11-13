@@ -161,9 +161,9 @@ body.modal-open{overflow:hidden}
 .landing-hero.glass-active .landing-glass-orb{opacity:.72;transform:translate(-50%,-50%) scale(1)}
 @media(hover:hover) and (pointer:fine){.landing-glass-orb{display:block}}
 .landing-hero-copy{position:relative;z-index:1}
-.landing-hero h1{max-width:1100px;margin:0 auto;color:#1f191a;font-family:"Arial Rounded MT Bold","Trebuchet MS",sans-serif;font-size:clamp(3rem,7.2vw,6.75rem);font-weight:900;line-height:.87;letter-spacing:-.06em;text-wrap:balance;text-shadow:0 3px 2px #fff9,0 18px 34px #1f191a24;animation:landing-title-float 6.5s cubic-bezier(.45,0,.25,1) infinite;will-change:transform}
+.landing-hero h1{max-width:1100px;margin:0 auto;color:#1f191a;font-family:"Arial Rounded MT Bold","Trebuchet MS",sans-serif;font-size:clamp(3rem,7.2vw,6.75rem);font-weight:900;line-height:.87;letter-spacing:-.06em;text-wrap:balance;text-shadow:0 2px 1px #fff,0 11px 13px #1f191a24,0 32px 48px #1f191a2e;filter:drop-shadow(0 8px 5px #1f191a12);animation:landing-title-float 6.5s cubic-bezier(.45,0,.25,1) infinite;will-change:transform}
 .landing-hero h1 span{display:block}
-@keyframes landing-title-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-7px)}}
+@keyframes landing-title-float{0%,100%{transform:translateY(-3px)}50%{transform:translateY(-12px)}}
 .landing-hero-copy>p{margin:18px auto 0;color:#5f5755;font-size:clamp(16px,1.45vw,21px);font-weight:500;letter-spacing:.04em}
 .landing-people{position:relative;width:min(720px,72vw);margin:clamp(18px,2.4vh,30px) 0 14px}
 .landing-people>div{width:100%;aspect-ratio:2.64;overflow:hidden}
