@@ -540,7 +540,10 @@
       ${landingHeader()}
       <main class="landing-main">
         <section class="landing-hero" aria-labelledby="landing-title">
-          <div class="landing-map" aria-hidden="true"><img src="./assets/landing-city-v2.png" alt=""></div>
+          <div class="landing-map" aria-hidden="true">
+            <img src="./assets/landing-city-v2.png" alt="">
+            <div class="landing-pixels"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+          </div>
           <div class="landing-hero-content">
             <div class="landing-hero-copy">
               <h1 id="landing-title"><span>WHERE EVERY</span><span>ROUTE MEETS</span></h1>
@@ -1017,9 +1020,9 @@
     for (const section of sections) {
       if (reduced) {
         section.style.removeProperty('--page-tilt');
-        section.style.removeProperty('--page-shift');
         section.style.removeProperty('--page-scale');
         section.style.removeProperty('--page-opacity');
+        section.style.removeProperty('--page-origin');
         continue;
       }
       const bounds = section.getBoundingClientRect();
@@ -1027,9 +1030,9 @@
       const distance = Math.max(-1, Math.min(1, (bounds.top + pageHeight / 2 - viewport / 2) / viewport));
       const depth = Math.abs(distance);
       section.style.setProperty('--page-tilt', `${distance * maxTilt}deg`);
-      section.style.setProperty('--page-shift', `${distance * 78}px`);
       section.style.setProperty('--page-scale', String(1 - depth * .08));
       section.style.setProperty('--page-opacity', String(1 - depth * .34));
+      section.style.setProperty('--page-origin', distance < 0 ? '50% 100%' : '50% 0%');
     }
   }
   window.addEventListener('resize', scheduleLandingPageTurn, { passive: true });
