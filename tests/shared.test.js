@@ -27,7 +27,8 @@ const testMapProvider = () => ({
 test('two independent clients complete the shared activity flow', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-shared-'));
   const filename = path.join(directory, 'test.sqlite');
-  let store = openStore(filename), server = createServer(store,testMapProvider());
+  const provider = testMapProvider();
+  let store = openStore(filename), server = createServer(store,provider);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   async function request(route, method = 'GET', data, token) {
@@ -35,7 +36,8 @@ test('two independent clients complete the shared activity flow', async () => {
       ...(data ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     }, body: data ? JSON.stringify(data) : undefined });
-    return { status: response.status, body: await response.json() };
+    const payload = await response.json();
+    return { status: response.status, body: payload.success ? payload.data : payload };
   }
   try {
     assert.equal((await fetch(base + '/index.html')).status, 200);
@@ -75,9 +77,39 @@ test('two independent clients complete the shared activity flow', async () => {
     assert.ok(recommended.body.activity.candidates.every(candidate => Object.hasOwn(candidate.dimensions, 'convenience')));
     assert.ok(recommended.body.activity.candidates.every(candidate => !Object.hasOwn(candidate.dimensions, 'transit')));
     const place = recommended.body.activity.candidates[0].id;
-    const voted = await request(`/api/activities/${id}/actions`, 'POST', { action: 'vote', data: { id: place } }, joined.body.token);
+    const voted = await request(`/api/activities/${id}/actions`, 'POST', { action: 'vote', data: { round: 1, candidateId: place } }, joined.body.token);
     assert.equal(voted.body.activity.votes[joined.body.activity.viewerId], place);
-    assert.equal((await request(`/api/activities/${id}`, 'GET', null, created.body.token)).body.activity.votes[joined.body.activity.viewerId], place);
+    const afterVote = (await request('/api/activities/' + id, 'GET', null, created.body.token)).body.activity;
+    assert.deepEqual(afterVote.votes, {});
+    assert.equal(afterVote.voteStatus.myVote, null);
+    assert.equal(afterVote.voteStatus.voteCounts[place], 1);
+    assert.ok(afterVote.candidates.every(p => p.routes.every(r => r.memberId !== joined.body.activity.viewerId)));
+    const actionPath = '/api/activities/' + id + '/actions';
+    const early = await request(actionPath, 'POST', { action: 'finish', data: { round: 1 } }, created.body.token);
+    assert.equal(early.body.error.code, 'NOT_ALL_VOTED');
+    const rerun = await request(actionPath, 'POST', { action: 'request', data: { round: 1, reason: '换个地方' } }, joined.body.token);
+    const requestId = rerun.body.activity.requests[0].id;
+    const search = provider.search;
+    provider.search = async () => { throw Object.assign(new Error('地图超时'), { code: 'MAP_TIMEOUT', retryable: true }); };
+    const approvalData = { action: 'review-request', data: { requestId, decision: 'approved' } };
+    const failedApproval = await request(actionPath, 'POST', approvalData, created.body.token);
+    assert.equal(failedApproval.status, 504);
+    const unchanged = store.get(id, created.body.token).activity;
+    assert.equal(unchanged.round, 1);
+    assert.equal(unchanged.requests[0].status, 'pending');
+    assert.equal(unchanged.voteStatus.voteCounts[place], 1);
+    provider.search = search;
+    const approved = await request(actionPath, 'POST', { action: 'review-request', data: { requestId, decision: 'approved' } }, created.body.token);
+    assert.equal(approved.body.activity.voteStatus.votedMembers, 0);
+    assert.ok(approved.body.activity.candidates.every(p => p.id.startsWith('c_2_food-')));
+    const stale = await request(actionPath, 'POST', { action: 'vote', data: { round: 1, candidateId: place } }, joined.body.token);
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error.code, 'ROUND_STALE');
+    const historyPath = '/api/activities/' + id + '/vote-history';
+    assert.equal((await request(historyPath)).status, 401);
+    const history = (await request(historyPath, 'GET', null, joined.body.token)).body.items;
+    assert.equal(history[0].voteCounts[place], 1);
+    assert.equal(Object.hasOwn(history[0], 'votes'), false);
     const feeling = await request(`/api/activities/${id}/actions`, 'POST', { action: 'feeling', data: { text: '很期待见面' } }, joined.body.token);
     assert.equal(feeling.body.activity.journal.feelings[0].text, '很期待见面');
     const photoId = crypto.randomUUID();
@@ -92,6 +124,11 @@ test('two independent clients complete the shared activity flow', async () => {
     assert.equal((await request(`/api/activities/${id}/requirements`, 'PUT', { origin: M.ORIGINS[0], mode: '步行', preference: '不限', budget: 0 }, 'invalid')).status, 401);
     const repeat = await request('/api/activities/join', 'POST', { code, nickname: '小陈' });
     assert.equal(repeat.status, 400, 'voting still prevents joining');
+    const deadline = approved.body.activity.deadline;
+    store.settleExpiredRounds(deadline);
+    const expired = (await request(historyPath, 'GET', null, joined.body.token)).body.items;
+    assert.equal(expired[1].status, 'no-votes');
+    assert.equal(expired[1].endedAt, deadline);
     const names = await request('/api/activities', 'POST', { title: '重名测试', nickname: '小陈', type: '聚餐', date: '2026-10-29', time: '18:30' });
     const namesId = names.body.activity.id;
     const sameName = await request('/api/activities/join', 'POST', { code: names.body.activity.code, nickname: '小陈' });
@@ -129,7 +166,8 @@ test('account gathers activities across nicknames and can claim a guest membersh
       ...(data ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     }, body: data ? JSON.stringify(data) : undefined });
-    return { status: response.status, body: await response.json() };
+    const payload = await response.json();
+    return { status: response.status, body: payload.success ? payload.data : payload };
   }
   const activity = (title, nickname) => ({ title, nickname, type: '聚餐', date: '2026-10-29', time: '18:30' });
   try {

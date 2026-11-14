@@ -213,8 +213,8 @@
   async function api(url, method = 'GET', data, token) {
     const response = await fetch(url, { method, headers: { ...(data ? { 'Content-Type': 'application/json' } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: data ? JSON.stringify(data) : undefined });
     const result = await response.json();
-    if (!response.ok) { const error = new Error(result.error || '服务器请求失败'); error.status = response.status; throw error; }
-    return result;
+    if (!response.ok) { const error = new Error(result.error?.message || result.error || '服务器请求失败'); error.status = response.status; error.code = result.error?.code; throw error; }
+    return result.success ? result.data : result;
   }
   function acceptShared(result) {
     const a = result.activity;
@@ -292,7 +292,13 @@
       }
       if (!active().members.some(m => m.id === viewer())) state.identities[active().id] = active().hostId;
       save(); if (action === 'vote' && view === 'recommend' && canAccess()) refreshVoteUI(); else render(); toast(message); return true;
-    } catch (error) { toast(error.message); return false; }
+    } catch (error) {
+      if (['ROUND_STALE', 'VOTING_CLOSED', 'ACTIVITY_COMPLETED'].includes(error.code)) {
+        await refreshShared().catch(() => {});
+      }
+      toast(error.message);
+      return false;
+    }
   }
   function avatar(m, index, small = false) {
     return `<span class="avatar avatar-${index % 5}${small ? ' small' : ''}" title="${esc(m.name)}">${esc(m.name.slice(0, 1))}</span>`;
@@ -431,8 +437,8 @@
   }
   function candidateCard(p, i) {
     const a = active();
-    const vote = a.votes[viewer()];
-    const count = M.tally(a)[p.id];
+    const { myVote: vote, voteCounts } = a.voteStatus || M.voteStatus(a, viewer());
+    const count = voteCounts[p.id];
     const mine = p.routes.find(r => r.memberId === viewer());
     const winner = a.winningCandidateId === p.id;
     return `<article id="candidate-${p.id}" class="candidate ${selectedPoi === p.id ? 'focused' : ''} ${vote === p.id ? 'voted' : ''}">
@@ -518,7 +524,7 @@
     const a = active();
     const members = M.visibleMembers(a, viewer());
     return `<section class="panel member-panel"><div class="panel-heading"><h3>一起出发的伙伴</h3><span class="count-badge">${a.members.length} / 10</span></div>
-      <div class="member-list">${members.map((m, i) => `<div class="member-row">${avatar(m, i)}<div class="member-copy"><strong>${esc(m.name)} ${m.id === viewer() ? '<small>我</small>' : ''}${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</strong><p>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? `${icon('lock')} 出发地已隐藏` : '待填写出行需求'}</p><span class="member-check ${a.votes[m.id] ? 'is-voted' : ''}" title="${a.votes[m.id] ? '已投票' : a.members[i].ready || a.members[i].origin ? '已填写需求' : '待填写'}">${a.votes[m.id] ? `${icon('check')} 已投票` : a.members[i].ready || a.members[i].origin ? '需求已就绪' : '等待填写'}</span></div></div>`).join('')}</div>
+      <div class="member-list">${members.map((m, i) => `<div class="member-row">${avatar(m, i)}<div class="member-copy"><strong>${esc(m.name)} ${m.id === viewer() ? '<small>我</small>' : ''}${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</strong><p>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? `${icon('lock')} 出发地已隐藏` : '待填写出行需求'}</p><span class="member-check ${(m.id === viewer() && a.votes[m.id]) ? 'is-voted' : ''}" title="${(m.id === viewer() && a.votes[m.id]) ? '已投票' : a.members[i].ready || a.members[i].origin ? '已填写需求' : '待填写'}">${(m.id === viewer() && a.votes[m.id]) ? `${icon('check')} 已投票` : a.members[i].ready || a.members[i].origin ? '需求已就绪' : '等待填写'}</span></div></div>`).join('')}</div>
       <button class="button full light" data-action="requirements" ${terminal(a) || a.paused ? 'disabled' : ''}>${icon('settings')} 编辑我的出行需求</button>
       <p class="panel-tip">${isShared(a) ? '每位成员在自己的浏览器填写和投票。' : '通过右上角身份切换，可演示每位成员的填写与投票。'}</p></section>`;
   }
@@ -530,12 +536,11 @@
   }
   function votePanel() {
     const a = active();
-    const total = Object.values(M.tally(a)).reduce((s, n) => s + n, 0);
-    const all = total === a.members.length;
+    const { votedMembers: total, allVoted: all } = a.voteStatus || M.voteStatus(a, viewer());
     return `<section class="panel vote-panel"><div class="panel-heading"><h3>把决定交给大家</h3><span class="tiny-label">第 ${a.round || 1} 轮</span></div>
       <div class="vote-progress"><strong>${total}<span> / ${a.members.length}</span></strong><span>位伙伴已投票</span></div><div class="progress-track"><span style="width:${total / a.members.length * 100}%"></span></div>
       <div class="countdown">${icon('clock')}<span>${a.paused ? '倒计时已暂停' : '距离本轮投票截止'}<strong id="countdown">${timerLabel(a)}</strong></span></div>
-      <p class="panel-tip">每人一票，截止前可改票。平票按本轮综合排序确定（当前为演示等权参考分）。</p>
+      <p class="panel-tip">每人一票，截止前可改票。平票按本轮综合推荐排名确定。</p>
       ${isHost() ? `<button class="button full primary" data-action="finish" ${!all || a.status !== 'voting' || a.paused ? 'disabled' : ''}>${icon('check')} 全员投票后确认结果</button>` : '<div class="subtle-box">全员投票后，发起者可提前确认结果。</div>'}
       ${a.status === 'no-votes' && isHost() ? `<button class="button full primary" data-action="revote" ${a.paused || !ready(a) ? 'disabled' : ''}>零票截止 · 重新开启投票</button>` : ''}
       ${!terminal(a) ? `<div class="management-actions">${isHost() ? `<button class="text-button" data-action="${a.paused ? 'resume' : 'pause'}">${icon(a.paused ? 'arrow' : 'pause')}${a.paused ? '恢复活动' : '暂停活动'}</button><button class="text-button muted" data-action="manage">管理活动 ${icon('chevron')}</button>` : `<button class="text-button" data-action="request" ${a.paused || !ready(a) ? 'disabled' : ''}>申请重新推荐</button>`}</div>` : ''}</section>`;
@@ -549,14 +554,23 @@
   }
   function requestsPanel(a) {
     if (!a.requests.length) return '';
-    return `<section class="request-log"><h3>重新推荐申请 · 全体成员可见</h3>${[...a.requests].reverse().map(r => `<article><div class="inline"><strong>${esc(a.members.find(m => m.id === r.memberId)?.name || '原成员')}</strong><span class="status request-${r.status}">${{ pending: '待处理', approved: '已同意', rejected: '已拒绝' }[r.status]}</span><small>第 ${r.round} 轮</small></div><p>${esc(r.reason)}</p>${r.response ? `<p class="request-response">${r.status === 'rejected' ? '拒绝原因' : '处理说明'}：${esc(r.response)}</p>` : ''}${r.status === 'pending' && isHost() && !terminal(a) ? `<div class="inline"><button class="text-button" data-action="recommend" ${a.paused ? 'disabled' : ''}>同意并重新推荐</button><button class="text-button danger" data-action="reject-request" data-value="${r.id}" ${a.paused ? 'disabled' : ''}>拒绝并说明原因</button></div>` : ''}</article>`).join('')}</section>`;
+    return `<section class="request-log"><h3>重新推荐申请 · 全体成员可见</h3>${[...a.requests].reverse().map(r => `<article><div class="inline"><strong>${esc(a.members.find(m => m.id === r.memberId)?.name || '原成员')}</strong><span class="status request-${r.status}">${{ pending: r.round === a.round && !terminal(a) ? '待处理' : '已失效', approved: '已同意', rejected: '已拒绝' }[r.status]}</span><small>第 ${r.round} 轮</small></div><p>${esc(r.reason)}</p>${r.response ? `<p class="request-response">${r.status === 'rejected' ? '拒绝原因' : '处理说明'}：${esc(r.response)}</p>` : ''}${r.status === 'pending' && r.round === a.round && isHost() && !terminal(a) ? `<div class="inline"><button class="text-button" data-action="approve-request" data-value="${esc(r.id)}" ${a.paused ? 'disabled' : ''}>同意并重新推荐</button><button class="text-button danger" data-action="reject-request" data-value="${r.id}" ${a.paused ? 'disabled' : ''}>拒绝并说明原因</button></div>` : ''}</article>`).join('')}</section>`;
   }
+  function historyPanel(a) {
+    if (!a.roundHistory?.length) return '';
+    const labels = { completed: '已确定集合点', 'no-votes': '零票截止', superseded: '已开启新轮次', cancelled: '活动已取消' };
+    return `<section class="request-log"><h3>投票历史</h3>${[...a.roundHistory].reverse().map(item =>
+      `<article><div class="inline"><strong>第 ${item.round} 轮</strong><small>${labels[item.status]}</small></div>
+      ${item.candidates.map(p => `<p>${esc(p.name)} · ${item.voteCounts[p.id] ?? 0} 票${item.winningCandidateId === p.id ? ' · 最终集合点' : ''}</p>`).join('')}</article>`
+    ).join('')}</section>`;
+  }
+
   function recommendations() {
     const a = active(), selectedGroup = M.GROUPS.find(g => g.id === group);
     const candidates = (a.groups[group] || []).map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
     return `<div class="recommend-page">${activityHeader()}${resultBanner()}
       <section class="recommend-toolbar" aria-label="推荐方案"><div class="group-tabs" role="tablist" aria-label="推荐方案">${M.GROUPS.map(g => `<button id="tab-${g.id}" role="tab" aria-controls="recommend-map" aria-selected="${g.id === group}" tabindex="${g.id === group ? 0 : -1}" class="${g.id === group ? 'selected' : ''}" data-action="recommend-group" data-value="${g.id}"><strong>${g.name}</strong><small>TOP ${a.groups[g.id]?.length || 0}</small></button>`).join('')}</div>
-      <button class="text-button" data-action="${isHost() ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? isHost() ? '重新推荐' : '申请重新推荐' : '生成推荐'}</button></section>
+      <button class="text-button" data-action="${isHost() && !a.round ? 'recommend' : 'request'}" ${terminal(a) || a.paused || !ready(a) ? 'disabled' : ''}>${icon('refresh')} ${a.candidates.length ? '申请重新推荐' : '生成推荐'}</button></section>
       ${(a.warnings || []).map(w => `<p class="notice">${esc(w)}</p>`).join('')}<div class="recommend-intro"><img src="./assets/workspace-idea.png" alt="" aria-hidden="true"><p class="group-description">${selectedGroup.description} 点击地点标记查看详情并投票。</p></div>
       <div id="recommend-map" role="tabpanel" aria-labelledby="tab-${group}">
       <div class="recommend-stage-grid">
@@ -566,7 +580,7 @@
       </div>
       </div>
       <div class="data-note">三组共用每人一票，同一地点跨组出现时票数合并。四项评分维度等权；${isShared(a) ? '地点和路线来自高德，费用按可获得数据展示；仅供出行参考。' : '当前为本机示例数据。'}</div>
-      <div class="recommend-support">${memberPanel()}${votePanel()}</div>${requestsPanel(a)}</div>`;
+      <div class="recommend-support">${memberPanel()}${votePanel()}</div>${requestsPanel(a)}${historyPanel(a)}</div>`;
   }
   function overview() {
     const activities = visibleActivities();
@@ -856,8 +870,8 @@
       ${a.status !== 'voting' && !terminal(a) && !a.paused ? `<div class="manage-members"><h3>成员管理</h3>${a.members.filter(m => m.id !== a.hostId).map(m => `<div class="inline"><span>${esc(m.name)}</span><button class="text-button danger" data-action="remove" data-value="${m.id}">移除</button></div>`).join('')}</div>` : ''}
       <div class="danger-zone"><h3>取消本次活动</h3><p>取消后保留记录，但无法继续推荐或投票。</p><button class="button danger-button full" data-action="cancel-confirm" ${terminal(a) ? 'disabled' : ''}>取消活动</button></div>`);
   }
-  function confirmAction(title, text, action, label = '确认继续') {
-    openModal(title, `<p class="modal-intro">${text}</p><div class="modal-actions"><button class="button light" data-action="close-modal">再想想</button><button class="button primary" data-action="${action}">${label}</button></div>`);
+  function confirmAction(title, text, action, label = '确认继续', value = '') {
+    openModal(title, `<p class="modal-intro">${text}</p><div class="modal-actions"><button class="button light" data-action="close-modal">再想想</button><button class="button primary" data-action="${action}" data-value="${esc(value)}">${label}</button></div>`);
   }
   function navigate() {
     const a = active(), p = a.candidates.find(p => p.id === selectedPoi) || a.candidates.find(p => p.id === a.winningCandidateId), m = self();
@@ -891,10 +905,10 @@
     'retry-static-map': () => { resetStaticMap(); render(); },
     'close-poi': () => closePoi(),
     'toggle-menu': () => { menuOpen = !menuOpen; $('#primary-nav').classList.toggle('is-open', menuOpen); $('[data-action="toggle-menu"]').setAttribute('aria-expanded', String(menuOpen)); },
-    vote: value => run('vote', { id: value }, '选票已保存，截止前仍可改票'),
-    recommend: () => active().candidates.length ? confirmAction('重新生成推荐？', '将按最新需求生成候选，并开启新的 24 小时投票。当前轮次与旧选票将失效。', 'recommend-confirm', '确认重新推荐') : run('recommend', {}, '推荐已生成，24 小时投票已开启'),
-    'recommend-confirm': async () => { if (await run('recommend', {}, '已开始新一轮投票，旧票已清空')) closeModal(); },
-    request: () => openModal('申请重新推荐', '<form id="request-form"><label>告诉大家为什么想换一组地点<textarea name="reason" maxlength="300" required placeholder="例如：出发地变了，希望大家的路程更均衡。"></textarea></label><button type="submit" class="button primary">提交申请</button></form>'),
+    vote: value => run('vote', { round: active().round, candidateId: value }, '选票已保存，截止前仍可改票'),
+    recommend: () => run('recommend', {}, '推荐已生成，24 小时投票已开启'),
+    'approve-request': id => run('review-request', { requestId: id, decision: 'approved' }, '已开始新一轮投票'),
+    request: () => openModal('申请重新推荐', `<form id="request-form"><input type="hidden" name="round" value="${active().round}"><label>告诉大家为什么想换一组地点<textarea name="reason" maxlength="300" required placeholder="例如：出发地变了，希望大家的路程更均衡。"></textarea></label><button type="submit" class="button primary">提交申请</button></form>`),
     'reject-request': id => openModal('拒绝申请并说明原因', `<form id="reject-form"><input type="hidden" name="id" value="${esc(id)}"><label>原因（所有成员可见）<textarea name="reason" maxlength="300" required></textarea></label><button type="submit" class="button primary">确认拒绝</button></form>`),
     'recommend-group': value => { group = value; selectedPoi = null; render(); document.getElementById(`tab-${value}`)?.focus({ preventScroll: true }); },
     'identity-info': () => {
@@ -958,11 +972,11 @@
       if (!others.length) return toast('当前没有其他游客身份可合并');
       openModal('合并本机游客身份', `<p class="modal-intro">把 ${esc(currentProfile().name)} 参与的活动转到另一游客身份下。仅合并本浏览器保存的活动凭证；同名也不会自动合并。</p><form id="merge-profile-form"><label>合并到<select name="target" required><option value="">选择目标游客身份</option>${others.map(item => `<option value="${esc(item.id)}">${esc(item.name)} · ${esc(item.id.slice(-4))}</option>`).join('')}</select></label><button class="button primary full" type="submit">确认合并</button></form>`);
     },
-    finish: () => confirmAction('确认这次相聚的地点？', '将按有效票数确定集合点；平票按本轮综合排名决定。确认后结果不可修改。', 'finish-confirm', '确定集合点'),
-    'finish-confirm': async () => { if (await run('finish', {}, '集合地点已确定，准备出发吧！')) closeModal(); },
+    finish: () => confirmAction('确认这次相聚的地点？', '将按有效票数确定集合点；平票按本轮综合排名决定。确认后结果不可修改。', 'finish-confirm', '确定集合点', active().round),
+    'finish-confirm': async value => { if (await run('finish', { round: Number(value) }, '集合地点已确定，准备出发吧！')) closeModal(); },
     pause: () => run('pause', {}, '活动已暂停，剩余投票时间已保留'),
     resume: () => run('resume', {}, '活动已恢复，继续原有投票时间'),
-    revote: () => run('revote', {}, '已沿用候选开启新的 24 小时投票'),
+    revote: () => run('revote', { round: active().round }, '已沿用候选开启新的 24 小时投票'),
     'cancel-confirm': () => confirmAction('确定取消活动？', '取消后无法恢复本次活动，但会保留活动记录。', 'cancel', '确认取消'),
     cancel: async () => { if (await run('cancel', {}, '活动已取消')) closeModal(); },
     remove: async value => { if (await run('remove', { id: value }, '成员已移除')) manage(); },
@@ -1017,9 +1031,9 @@
     const data = new FormData(form);
     try {
       if (form.getAttribute('id') === 'request-form') {
-        if (await run('request', { reason: data.get('reason') }, '申请已提交，处理状态对所有成员可见')) closeModal();
+        if (await run('request', { round: Number(data.get('round')), reason: data.get('reason') }, '申请已提交，处理状态对所有成员可见')) closeModal();
       } else if (form.getAttribute('id') === 'reject-form') {
-        if (await run('reject-request', { id: data.get('id'), reason: data.get('reason') }, '已拒绝申请并公开原因')) closeModal();
+        if (await run('review-request', { requestId: data.get('id'), decision: 'rejected', reason: data.get('reason') }, '已拒绝申请并公开原因')) closeModal();
       } else if (form.getAttribute('id') === 'schedule-form') {
         if (await run('schedule', { date: data.get('date'), time: data.get('time') }, '日历安排已更新')) closeModal();
       } else if (form.getAttribute('id') === 'create-form') {

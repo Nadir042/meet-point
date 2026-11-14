@@ -16,7 +16,7 @@ test('full demo data covers workflow states, recommendation groups and every bui
   assert.deepEqual(new Set(entries.map(entry => entry.activity.status)), new Set(['collecting', 'voting', 'completed', 'no-votes', 'cancelled']));
   assert.ok(entries.some(entry => entry.activity.paused));
   assert.deepEqual(
-    [...new Set(entries.flatMap(entry => entry.activity.candidates.map(candidate => candidate.id)))].sort(),
+    [...new Set(entries.flatMap(entry => entry.activity.candidates.map(candidate => candidate.placeId || candidate.id)))].sort(),
     M.POIS.map(candidate => candidate.id).sort()
   );
   const mapped = entries.find(entry => entry.activity.title.includes('完整地图')).activity;

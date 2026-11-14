@@ -23,7 +23,7 @@ async function bodyJson(req, limit = 16_384) {
 function createServer(store = openStore(), mapProvider = require('./amap').createAmap()) {
   mapProvider = require('./map-mock').withMapFaults(mapProvider);
   const staticMapCache = new Map();
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
   let name;
   try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).slice(1) || 'index.html'; }
   catch { return sendJson(res, 400, { error: '无效地址' }); }
@@ -83,16 +83,24 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         res.writeHead(200, { 'Content-Type': image.contentType, 'Content-Length': image.body.length, 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' });
         return res.end(image.body);
       }
-      const match = /^api\/activities\/([0-9a-f-]{36})(\/(requirements|actions))?$/.exec(name);
-      if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, store.get(match[1], token));
+      const match = /^api\/activities\/([0-9a-f-]{36})(\/(requirements|actions|vote-history))?$/.exec(name);
+      if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, { success: true, data: store.get(match[1], token) });
+      if (match && match[3] === 'vote-history' && req.method === 'GET')
+        return sendJson(res, 200, { success: true, data: store.history(match[1], token) });
       if (match && match[3] === 'requirements' && req.method === 'PUT') return sendJson(res, 200, store.requirements(match[1], token, await bodyJson(req)));
       if (match && match[3] === 'actions' && req.method === 'POST') {
-        const input=await bodyJson(req);
-        return sendJson(res,200,input.action==='recommend'?await store.recommendLive(match[1],token,mapProvider):store.act(match[1],token,input));
+        const input = await bodyJson(req);
+        const generate = input.action === 'recommend' || (input.action === 'review-request' && input.data?.decision === 'approved');
+        const data = generate ? await store.recommendLive(match[1], token, mapProvider, input) : store.act(match[1], token, input);
+        return sendJson(res, 200, { success: true, data });
       }
       return sendJson(res, 404, { error: '接口不存在' });
     } catch (error) {
       const status = error.status || ({ MAP_TIMEOUT: 504, MAP_QUOTA_EXCEEDED: 429, MAP_PROVIDER_ERROR: 502 }[error.code]) || 400;
+      if (/^api\/activities\/[^/]+(?:\/(?:actions|vote-history))?$/.test(name)) {
+        const code = error.code || ({ 401: 'UNAUTHORIZED', 403: 'NOT_ACTIVITY_MEMBER', 404: 'NOT_FOUND' })[status] || 'INVALID_INPUT';
+        return sendJson(res, status, { success: false, error: { code, message: error.message, retryable: !!error.retryable } });
+      }
       return sendJson(res, status, { error: error.message, ...(error.code ? { code: error.code, retryable: !!error.retryable } : {}) });
     }
   }
@@ -104,6 +112,17 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
     res.end(req.method === 'HEAD' ? undefined : data);
   });
 });
+  let timer;
+  server.on('listening', () => {
+    const settle = () => {
+      try { store.settleExpiredRounds?.(); }
+      catch (error) { console.error('轮次计票失败', error.message); }
+    };
+    settle();
+    timer = setInterval(settle, 1000).unref();
+  });
+  server.on('close', () => clearInterval(timer));
+  return server;
 }
 if (require.main === module) {
   const server = createServer();
