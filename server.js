@@ -9,6 +9,7 @@ const sendJson = (res, status, body) => {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
   res.end(JSON.stringify(body));
 };
+const sendSuccess = (res, status, data, message) => sendJson(res, status, { success: true, ...(message ? { message } : {}), data });
 async function bodyJson(req, limit = 16_384) {
   const chunks = [];
   let size = 0;
@@ -33,15 +34,15 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
       const token = /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.headers.authorization || '')?.[1];
       if(name==='api/locations/search'||name==='api/locations/reverse'){
         const q=new URL(req.url,'http://localhost').searchParams;
-        store.authorizeLocation(q.get('activityId'),token);
+        store.authorizeLocation(token);
         if(name.endsWith('search')){
           const keyword=q.get('keyword')?.trim();
-          if(!keyword||keyword.length>80)throw Error('请输入搜索词');
-          return sendJson(res,200,{items:(await mapProvider.search(keyword,null,q.get('city')||'上海')).slice(0,10)});
+          if(!keyword||keyword.length>80){const error=Error('请输入 1—80 个字符的搜索词');error.status=400;throw error;}
+          return sendSuccess(res,200,{items:(await mapProvider.search(keyword,null,q.get('city')||'上海')).slice(0,10)});
         }
-        const lng=Number(q.get('lng')),lat=Number(q.get('lat'));
-        if(!q.has('lng')||!q.has('lat')||!require('./recommendation').valid({lng,lat}))throw Error('坐标无效');
-        return sendJson(res,200,await mapProvider.reverse(lng,lat));
+        const rawLng=q.get('lng'),rawLat=q.get('lat'),lng=Number(rawLng),lat=Number(rawLat);
+        if(!rawLng?.trim()||!rawLat?.trim()||!require('./recommendation').valid({lng,lat})){const error=Error('坐标无效');error.status=400;throw error;}
+        return sendSuccess(res,200,await mapProvider.reverse(lng,lat));
       }
       if (name === 'api/account/register' && req.method === 'POST') return sendJson(res, 201, store.register(await bodyJson(req)));
       if (name === 'api/account/login' && req.method === 'POST') return sendJson(res, 200, store.login(await bodyJson(req)));
@@ -87,7 +88,7 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
       if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, { success: true, data: store.get(match[1], token) });
       if (match && match[3] === 'vote-history' && req.method === 'GET')
         return sendJson(res, 200, { success: true, data: store.history(match[1], token) });
-      if (match && match[3] === 'requirements' && req.method === 'PUT') return sendJson(res, 200, store.requirements(match[1], token, await bodyJson(req)));
+      if (match && match[3] === 'requirements' && req.method === 'PUT') return sendSuccess(res, 200, store.requirements(match[1], token, await bodyJson(req)), '出行需求已保存');
       if (match && match[3] === 'actions' && req.method === 'POST') {
         const input = await bodyJson(req);
         const generate = input.action === 'recommend' || (input.action === 'review-request' && input.data?.decision === 'approved');
@@ -97,8 +98,8 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
       return sendJson(res, 404, { error: '接口不存在' });
     } catch (error) {
       const status = error.status || ({ MAP_TIMEOUT: 504, MAP_QUOTA_EXCEEDED: 429, MAP_PROVIDER_ERROR: 502 }[error.code]) || 400;
-      if (/^api\/activities\/[^/]+(?:\/(?:actions|vote-history))?$/.test(name)) {
-        const code = error.code || ({ 401: 'UNAUTHORIZED', 403: 'NOT_ACTIVITY_MEMBER', 404: 'NOT_FOUND' })[status] || 'INVALID_INPUT';
+      if (/^api\/locations\/(?:search|reverse)$/.test(name) || /^api\/activities\/[^/]+(?:\/(?:requirements|actions|vote-history))?$/.test(name)) {
+        const code = error.code || ({ 401: 'UNAUTHORIZED', 403: 'NOT_ACTIVITY_MEMBER', 404: 'ACTIVITY_NOT_FOUND' })[status] || 'INVALID_REQUEST';
         return sendJson(res, status, { success: false, error: { code, message: error.message, retryable: !!error.retryable } });
       }
       return sendJson(res, status, { error: error.message, ...(error.code ? { code: error.code, retryable: !!error.retryable } : {}) });

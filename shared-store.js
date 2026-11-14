@@ -44,6 +44,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
   const update = db.prepare('UPDATE activities SET payload = ? WHERE id = ?');
   const addSession = db.prepare('INSERT INTO sessions (token_hash, activity_id, member_id) VALUES (?, ?, ?)');
   const findSession = db.prepare('SELECT member_id FROM sessions WHERE token_hash = ? AND activity_id = ?');
+  const findAnySession = db.prepare('SELECT activity_id FROM sessions WHERE token_hash = ?');
   const addPhoto = db.prepare('INSERT INTO photos (id, activity_id, member_id, mime, data) VALUES (?, ?, ?, ?, ?)');
   const findPhoto = db.prepare('SELECT mime, data FROM photos WHERE id = ? AND activity_id = ?');
   const deletePhoto = db.prepare('DELETE FROM photos WHERE id = ? AND activity_id = ?');
@@ -223,6 +224,10 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     requirements(id, token, input) {
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
+        const origin = input?.origin;
+        if (!origin || origin.provider !== 'amap' || typeof origin.placeId !== 'string' || !origin.placeId.trim() ||
+            typeof origin.name !== 'string' || !origin.name.trim() || !require('./recommendation').valid(origin))
+          fail(400, '请从高德搜索结果或当前位置中确认出发地');
         const a = M.act(activity, memberId, 'requirements', {
           origin: input.origin, mode: input.mode,
           preference: input.preference, budget: input.budget, shared: input.shared === true
@@ -249,7 +254,12 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         return {activity:project(a,memberId)};
       });
     },
-    authorizeLocation(id,token){authenticate(id,token);},
+    authorizeLocation(token) {
+      if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '活动令牌缺失或无效');
+      const guest = findAnySession.get(digest(token));
+      if (guest) return authenticate(guest.activity_id, token);
+      accountFor(token);
+    },
     act(id, token, input) {
       const allowed = new Set(['requirements', 'recommend', 'request', 'review-request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
       if (!input || !allowed.has(input.action)) fail(400, '不支持该操作');
@@ -281,6 +291,12 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
           !/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64)) fail(400, '照片格式无效');
       const bytes = Buffer.from(input.base64, 'base64');
       if (!bytes.length || bytes.length > 8 * 1024 * 1024) fail(400, '照片不能超过 8 MB');
+      const signatures = {
+        'image/png': bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])),
+        'image/jpeg': bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+        'image/webp': bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+      };
+      if (!signatures[input.mime]) fail(400, '照片内容与文件类型不一致');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
         const a = M.act(activity, memberId, 'photos', { photos: [{ id: input.id, name: input.name }] });

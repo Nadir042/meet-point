@@ -790,7 +790,7 @@
     status.textContent='正在搜索地点，请稍候…';
     try{
       const a=active();
-      const result=await api('/api/locations/search?activityId='+encodeURIComponent(a.id)+'&keyword='+encodeURIComponent(keyword),'GET',null,sessionFor(a.id).token);
+      const result=await api('/api/locations/search?keyword='+encodeURIComponent(keyword),'GET',null,sessionFor(a.id).token);
       if(!form.isConnected||!document.getElementById('modal').open)return;
       if(input.value.trim()!==keyword){status.textContent='搜索词已修改，请重新搜索。';return;}
       status.textContent=result.items.length?'找到 '+result.items.length+' 个地点，请点击下方地点选择。':'没有找到相关地点，请换一个名称或补充街道信息。';
@@ -823,7 +823,7 @@
     try{
       const position=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:false,timeout:10000,maximumAge:60000}));
       const {longitude:lng,latitude:lat}=position.coords,a=active();
-      const place=await api('/api/locations/reverse?activityId='+encodeURIComponent(a.id)+'&lng='+encodeURIComponent(lng)+'&lat='+encodeURIComponent(lat),'GET',null,sessionFor(a.id).token);
+      const place=await api('/api/locations/reverse?lng='+encodeURIComponent(lng)+'&lat='+encodeURIComponent(lat),'GET',null,sessionFor(a.id).token);
       if(!form.isConnected||!document.getElementById('modal').open)return;
       selectedOrigin=place;input.value=place.name;
       status.textContent='已根据当前位置找到附近地点。';

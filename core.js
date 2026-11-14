@@ -322,7 +322,7 @@
         }
         case 'requirements': {
           const origin = data.origin;
-          assert(origin && typeof origin.name === 'string' && origin.name.trim() && Number.isFinite(origin.lng) && Number.isFinite(origin.lat), '请选择有效出发地');
+          assert(origin && typeof origin.name === 'string' && origin.name.trim() && Number.isFinite(origin.lng) && Number.isFinite(origin.lat) && Math.abs(origin.lng) <= 180 && Math.abs(origin.lat) <= 90, '请选择有效出发地');
           assert(['公共交通', '驾车', '步行', '骑行'].includes(data.mode), '请选择交通方式');
           assert(OPTIONS[a.type].includes(data.preference), '请选择适用的活动偏好');
           assert(Number.isFinite(data.budget) && data.budget >= 0 && data.budget <= 5000, '预算应在 0—5000 元之间');
