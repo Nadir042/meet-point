@@ -32,8 +32,12 @@
     { id: 'p6', name: '世纪公园', subtitle: '在开阔的绿意里，开启一场轻松会面', area: '浦东新区 · 锦绣路', lng: 121.5501, lat: 31.2157, tags: ['休闲娱乐'], preference: ['赏风景', '不限'], budget: 0, transit: 8.6, illustration: 'park', line: '地铁 2 / 18 号线', x: 85, y: 65 }
   ];
   const PREFERENCES = ['不限', '聚餐', '逛街', '赏风景'];
-  const OPTIONS = Object.fromEntries(['聚餐', '休闲娱乐', '线下会面'].map(type => [type, PREFERENCES]));
-  const oldPreference = value => ({ '本帮菜': '聚餐', '火锅': '聚餐', '西餐': '聚餐', '户外散步': '赏风景', '学习讨论': '不限', '工作交流': '不限', '朋友会面': '不限' })[value] || value;
+  const OPTIONS = {
+    '聚餐': ['不限','火锅','烧烤','中餐','西餐','咖啡甜品','聚餐'],
+    '休闲娱乐': ['不限','KTV','桌游','电影院','公园','商场','剧本杀','密室逃脱','美甲','手工','写真','拼豆','逛街','赏风景','聚餐'],
+    '线下会面': ['不限','学习讨论','工作交流','朋友会面','安静场所','交通便利','逛街','赏风景','聚餐']
+  };
+  const oldPreference = value => ({ '本帮菜': '聚餐', '户外散步': '赏风景',  })[value] || value;
   const clone = value => JSON.parse(JSON.stringify(value));
   const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const round = n => Math.round(n * 10) / 10;
@@ -55,6 +59,17 @@
   }
   function member(name, originIndex = null, mode = '公共交通', preference = '不限', budget = 150, shared = false) {
     return { id: uid(), name, origin: originIndex === null ? null : clone(ORIGINS[originIndex]), mode, preference, budget, shared };
+  }
+  function navigationUrl(origin, destination, mode) {
+    const modes = { '公共交通': 'bus', '驾车': 'car', '步行': 'walk', '骑行': 'ride' };
+    assert(origin && destination && [origin.lng, origin.lat, destination.lng, destination.lat].every(Number.isFinite), '路线地点无效');
+    assert(modes[mode], '交通方式无效');
+    const params = new URLSearchParams({
+      from: `${origin.lng},${origin.lat},${origin.name || ''}`,
+      to: `${destination.lng},${destination.lat},${destination.name || ''}`,
+      mode: modes[mode], policy: '1', src: 'MeetPoint', coordinate: 'gaode', callnative: '0'
+    });
+    return `https://uri.amap.com/navigation?${params}`;
   }
   function createActivity(title, nickname, type = '聚餐', now = Date.now(), options = {}) {
     assert(title.trim() && nickname.trim(), '请填写活动名称和昵称');
@@ -78,6 +93,11 @@
       m.origin && Number.isFinite(m.origin.lng) && Number.isFinite(m.origin.lat) &&
       ['公共交通', '驾车', '步行', '骑行'].includes(m.mode) &&
       m.preference && Number.isFinite(m.budget) && m.budget >= 0);
+  }
+  function recommendationProgress(a) {
+    const total = a.members.length;
+    const readyCount = a.members.filter(member => member.ready || member.origin).length;
+    return { total, readyCount, stage: total < 2 ? 'members' : readyCount < total ? 'requirements' : 'ready' };
   }
   function rankedPlaces(a) {
     assert(ready(a), '需要 2—10 名成员，且每个人都已填写出行需求');
@@ -312,9 +332,10 @@
         case 'recommend': {
           host();
           assert(a.round === 0, '已有推荐，请审批当前轮次的重新推荐申请', 'REQUEST_NOT_FOUND');
-          const candidates = recommend(a);
+          const candidates = data.recommendation ? clone(data.recommendation.candidates) : recommend(a);
           assert(candidates.length, '没有适合的候选，请调整活动需求', 'NO_CANDIDATES');
-          startRound(a, candidates, groupCandidates(candidates), now);
+          startRound(a, candidates, data.recommendation?.groups || groupCandidates(candidates), now);
+          a.warnings = data.recommendation?.warnings || [];
           break;
         }
         case 'request':
@@ -332,9 +353,10 @@
           const decision = action === 'reject-request' ? 'rejected' : data.decision;
           assert(['approved', 'rejected'].includes(decision), '请选择同意或拒绝');
           if (decision === 'approved') {
-            const candidates = recommend(a);
+            const candidates = data.recommendation ? clone(data.recommendation.candidates) : recommend(a);
             assert(candidates.length, '没有适合的候选，请调整活动需求', 'NO_CANDIDATES');
-            startRound(a, candidates, groupCandidates(candidates), now);
+            startRound(a, candidates, data.recommendation?.groups || groupCandidates(candidates), now);
+            a.warnings = data.recommendation?.warnings || [];
           } else {
             assert(typeof data.reason === 'string' && data.reason.trim() && data.reason.trim().length <= 300,
               '请填写拒绝原因（1—300 字）', 'REJECT_REASON_REQUIRED', 400);
@@ -407,7 +429,7 @@
       return a;
     });
   }
-  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
+  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MeetPoint = api;
 })(typeof window !== 'undefined' ? window : globalThis);

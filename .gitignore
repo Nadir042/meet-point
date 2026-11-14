@@ -3,3 +3,12 @@ data/
 tmp/
 *.log
 .DS_Store
+
+work/
+.env
+.env.*
+
+.impeccable/live/*
+!.impeccable/live/config.json
+.impeccable/chrome-*/
+.impeccable/review/

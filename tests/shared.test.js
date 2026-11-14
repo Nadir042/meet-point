@@ -10,10 +10,25 @@ const { createServer } = require('../server');
 const { openStore } = require('../shared-store');
 const M = require('../core');
 
+const testMapProvider = () => ({
+  async search() {
+    return [
+      {provider:'test',placeId:'food-1',name:'测试餐厅甲',address:'测试路 1 号',category:'中餐厅',typecode:'050100',lng:121.47,lat:31.22,rating:4.6},
+      {provider:'test',placeId:'food-2',name:'测试餐厅乙',address:'测试路 2 号',category:'咖啡厅',typecode:'050500',lng:121.45,lat:31.23,rating:4.4},
+      {provider:'test',placeId:'food-3',name:'测试餐厅丙',address:'测试路 3 号',category:'西餐厅',typecode:'050200',lng:121.49,lat:31.21,rating:4.2}
+    ];
+  },
+  async route(origin,destination) {
+    const distanceMeters=Math.round(Math.hypot((origin.lng-destination.lng)*95000,(origin.lat-destination.lat)*111000));
+    return {minutes:Math.max(5,Math.ceil(distanceMeters/500)),distanceMeters,cost:null,costStatus:'unavailable',transfers:0};
+  }
+});
+
 test('two independent clients complete the shared activity flow', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-shared-'));
   const filename = path.join(directory, 'test.sqlite');
-  let store = openStore(filename), server = createServer(store);
+  const provider = testMapProvider();
+  let store = openStore(filename), server = createServer(store,provider);
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   async function request(route, method = 'GET', data, token) {
@@ -74,8 +89,19 @@ test('two independent clients complete the shared activity flow', async () => {
     assert.equal(early.body.error.code, 'NOT_ALL_VOTED');
     const rerun = await request(actionPath, 'POST', { action: 'request', data: { round: 1, reason: '换个地方' } }, joined.body.token);
     const requestId = rerun.body.activity.requests[0].id;
+    const search = provider.search;
+    provider.search = async () => { throw Object.assign(new Error('地图超时'), { code: 'MAP_TIMEOUT', retryable: true }); };
+    const approvalData = { action: 'review-request', data: { requestId, decision: 'approved' } };
+    const failedApproval = await request(actionPath, 'POST', approvalData, created.body.token);
+    assert.equal(failedApproval.status, 504);
+    const unchanged = store.get(id, created.body.token).activity;
+    assert.equal(unchanged.round, 1);
+    assert.equal(unchanged.requests[0].status, 'pending');
+    assert.equal(unchanged.voteStatus.voteCounts[place], 1);
+    provider.search = search;
     const approved = await request(actionPath, 'POST', { action: 'review-request', data: { requestId, decision: 'approved' } }, created.body.token);
     assert.equal(approved.body.activity.voteStatus.votedMembers, 0);
+    assert.ok(approved.body.activity.candidates.every(p => p.id.startsWith('c_2_food-')));
     const stale = await request(actionPath, 'POST', { action: 'vote', data: { round: 1, candidateId: place } }, joined.body.token);
     assert.equal(stale.status, 409);
     assert.equal(stale.body.error.code, 'ROUND_STALE');
@@ -120,7 +146,7 @@ test('two independent clients complete the shared activity flow', async () => {
     assert.deepEqual(simultaneous.map(result => result.status).sort(), [201, 400]);
     assert.equal((await request(`/api/activities/${capActivity.body.activity.id}`, 'GET', null, capActivity.body.token)).body.activity.members.length, 10);
     await new Promise(resolve => server.close(resolve)); store.close();
-    store = openStore(filename); server = createServer(store);
+    store = openStore(filename); server = createServer(store,testMapProvider());
     assert.equal(store.get(capActivity.body.activity.id, capActivity.body.token).activity.members.length, 10, 'database survives server restart');
   } finally {
     if (server.listening) await new Promise(resolve => server.close(resolve));

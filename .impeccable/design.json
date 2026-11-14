@@ -1,0 +1,145 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-13T00:18:33+08:00",
+  "title": "Design System: MeetPoint",
+  "extensions": {
+    "colorMeta": {
+      "coral-action": {
+        "role": "primary",
+        "displayName": "会面珊瑚橙",
+        "canonical": "#F26843",
+        "tonalRamp": ["#492014", "#74311F", "#A14528", "#D95732", "#F26843", "#F58A6C", "#F9B9A5", "#FDE4DA"]
+      },
+      "coral-action-deep": {
+        "role": "primary",
+        "displayName": "深珊瑚橙",
+        "canonical": "#D95732",
+        "tonalRamp": ["#421A0F", "#6B2918", "#963A22", "#BC492A", "#D95732", "#E97B5D", "#F4B09C", "#FBE1D7"]
+      },
+      "ink-warm": {
+        "role": "neutral",
+        "displayName": "暖墨黑",
+        "canonical": "#1F191A",
+        "tonalRamp": ["#151011", "#1F191A", "#443D3E", "#6A6263", "#91898A", "#B8B1B2", "#DDD9DA", "#F6F4F4"]
+      },
+      "paper-cream": {
+        "role": "neutral",
+        "displayName": "城市纸白",
+        "canonical": "#FAF9F4",
+        "tonalRamp": ["#27251F", "#504D43", "#7B786C", "#A7A399", "#CFCCC3", "#E8E6DF", "#F3F1EB", "#FAF9F4"]
+      },
+      "route-green": {
+        "role": "secondary",
+        "displayName": "路线苔绿",
+        "canonical": "#566B4B",
+        "tonalRamp": ["#182015", "#2A3825", "#3F5137", "#566B4B", "#78916B", "#9FB397", "#C9D4C4", "#EDF2E8"]
+      },
+      "route-blue": {
+        "role": "secondary",
+        "displayName": "路线蓝",
+        "canonical": "#3568D4",
+        "tonalRamp": ["#0D1D43", "#173372", "#214AA2", "#3568D4", "#638CE2", "#94B2ED", "#C6D7F6", "#EEF4FD"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "展示标题", "purpose": "首页和关键阶段的主标题。" },
+      "headline": { "displayName": "页面标题", "purpose": "页面和结果状态标题。" },
+      "title": { "displayName": "内容标题", "purpose": "地点、卡片和弹窗标题。" },
+      "body": { "displayName": "正文", "purpose": "说明、表单和推荐理由。" },
+      "label": { "displayName": "标签", "purpose": "字段、状态和辅助导航。" }
+    },
+    "shadows": [
+      { "name": "card-ambient", "value": "0 6px 24px rgba(31, 25, 26, 0.06)", "purpose": "普通信息卡片和活动卡片。" },
+      { "name": "overlay", "value": "0 16px 48px rgba(31, 25, 26, 0.14)", "purpose": "弹窗、地图详情和移动端底部面板。" }
+    ],
+    "motion": [
+      { "name": "state-fast", "value": "160ms ease-out", "purpose": "按钮、边框和颜色状态切换。" }
+    ],
+    "breakpoints": [
+      { "name": "wide", "value": "1200px" },
+      { "name": "compact", "value": "900px" },
+      { "name": "mobile", "value": "700px" },
+      { "name": "narrow", "value": "380px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "每个视区最重要的下一步操作。",
+      "html": "<button class=\"ds-btn-primary\">创建活动</button>",
+      "css": ".ds-btn-primary{min-height:44px;padding:12px 20px;border:0;border-radius:12px;background:#F26843;color:#fff;font:600 14px/1.4 'PingFang SC','Microsoft YaHei',sans-serif;transition:background 160ms ease-out}.ds-btn-primary:hover{background:#D95732}.ds-btn-primary:active{background:#BC492A}.ds-btn-primary:focus-visible{outline:3px solid #1F191A;outline-offset:3px}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "次要、返回和补充操作。",
+      "html": "<button class=\"ds-btn-secondary\">查看推荐理由</button>",
+      "css": ".ds-btn-secondary{min-height:44px;padding:12px 20px;border:1px solid #E5DED7;border-radius:12px;background:#fff;color:#1F191A;font:600 14px/1.4 'PingFang SC','Microsoft YaHei',sans-serif;transition:border-color 160ms ease-out,background 160ms ease-out}.ds-btn-secondary:hover{border-color:#F26843;background:#FAF9F4}.ds-btn-secondary:active{background:#F4EFEA}.ds-btn-secondary:focus-visible{outline:3px solid #F26843;outline-offset:3px}"
+    },
+    {
+      "name": "Location Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "地点搜索及常规表单输入。",
+      "html": "<label class=\"ds-field\"><span>你的出发地</span><input placeholder=\"例如：人民广场\"></label>",
+      "css": ".ds-field{display:grid;gap:8px;color:#1F191A;font:600 13px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-field input{min-height:44px;padding:12px 14px;border:1px solid #E5DED7;border-radius:12px;background:#fff;color:#1F191A;font:400 16px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-field input:hover{border-color:#B8AAA2}.ds-field input:focus{outline:3px solid rgba(242,104,67,.22);border-color:#F26843}.ds-field input::placeholder{color:#8A8280}"
+    },
+    {
+      "name": "Status Chip",
+      "kind": "chip",
+      "description": "活动、投票或推荐状态。",
+      "html": "<span class=\"ds-chip\">等待伙伴填写</span>",
+      "css": ".ds-chip{display:inline-flex;align-items:center;min-height:28px;padding:5px 10px;border:1px solid #E5DED7;border-radius:10px;background:#FAF9F4;color:#6F6865;font:600 12px/1.4 'PingFang SC','Microsoft YaHei',sans-serif}.ds-chip:focus-visible{outline:3px solid #F26843;outline-offset:2px}"
+    },
+    {
+      "name": "Recommendation Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "展示候选地点、路线指标和投票入口。",
+      "html": "<article class=\"ds-card\"><span>最公平 · 第 1 名</span><h3>人民广场</h3><p>大家的通勤时间差最小，预计平均 34 分钟。</p><strong>公平度 92</strong></article>",
+      "css": ".ds-card{display:grid;gap:10px;padding:24px;border:1px solid #E5DED7;border-radius:16px;background:#fff;color:#1F191A;box-shadow:0 6px 24px rgba(31,25,26,.06);font-family:'PingFang SC','Microsoft YaHei',sans-serif}.ds-card span{color:#D95732;font-size:12px;font-weight:600}.ds-card h3{margin:0;font-size:20px;line-height:1.4}.ds-card p{margin:0;color:#6F6865;font-size:14px;line-height:1.7}.ds-card strong{font-size:18px}.ds-card:hover{border-color:#D9CEC6}.ds-card:focus-within{outline:3px solid rgba(242,104,67,.22);outline-offset:3px}"
+    },
+    {
+      "name": "Top Navigation",
+      "kind": "nav",
+      "description": "桌面端的主要页面导航。",
+      "html": "<nav class=\"ds-nav\"><a class=\"is-active\" href=\"#\">推荐地点</a><a href=\"#\">成员需求</a><a href=\"#\">活动记录</a></nav>",
+      "css": ".ds-nav{display:flex;gap:8px;padding:8px;border-bottom:1px solid #E5DED7;background:#FAF9F4;font-family:'PingFang SC','Microsoft YaHei',sans-serif}.ds-nav a{padding:10px 12px;border-radius:10px;color:#6F6865;text-decoration:none;font-size:14px;font-weight:600}.ds-nav a:hover{background:#fff;color:#1F191A}.ds-nav a.is-active{background:#fff;color:#1F191A;box-shadow:inset 0 -2px #F26843}.ds-nav a:focus-visible{outline:3px solid #F26843;outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "城市会面手册",
+    "overview": "MeetPoint 像一本为朋友共同出行而编辑的城市手册：温暖、有秩序，既能快速给出答案，也愿意解释答案从何而来。米白纸张感承接用户选择的 PPT 气质，大标题和充足留白建立“大气”，珊瑚橙只把注意力带向下一步行动。语言保持轻松亲切，界面不追求企业后台的密集，也不使用幼态插画掩盖真实信息。",
+    "keyCharacteristics": [
+      "米白纸张底色、暖黑文字和克制的珊瑚橙行动色。",
+      "清晰的大标题、充足留白和容易扫读的内容层次。",
+      "柔和圆角卡片承载复杂协作信息，但不把每句话都装进卡片。",
+      "手机和电脑共享同一任务顺序，布局随屏幕重排而不是简单缩小。",
+      "地图、投票和推荐状态真实、可解释、可恢复。"
+    ],
+    "rules": [
+      { "name": "The One Action Rule", "body": "同一视区只允许一个珊瑚橙主行动；其他操作使用次级或文字按钮。", "section": "colors" },
+      { "name": "The Honest Map Rule", "body": "地图和路线颜色表达数据类别或状态，不为了装饰随意使用。", "section": "colors" },
+      { "name": "The Readable Mobile Rule", "body": "手机端不通过把正文压到 8–10px 来换取空间；应改为重排、折叠次要内容或允许滚动。", "section": "typography" },
+      { "name": "The Same Journey Rule", "body": "手机和电脑必须完成相同业务流程；允许改变排列和展开方式，不得隐藏核心功能。", "section": "layout" },
+      { "name": "The Quiet Depth Rule", "body": "阴影只表达层级，不用厚重黑影制造装饰效果。", "section": "elevation" }
+    ],
+    "dos": [
+      "Do 使用大标题、短说明和明确主按钮引导单一下一步。",
+      "Do 在推荐和投票界面直接解释公平度、路线时间、费用未知和失败原因。",
+      "Do 分别在桌面宽屏和约 390px 手机宽度验证完整流程。",
+      "Do 为加载、无结果、超时、配额不足和路线不可用提供可恢复操作。",
+      "Do 保持正文和触控目标在真实手机上可读、可点。"
+    ],
+    "donts": [
+      "Don't 在同一视区放置多个同等醒目的珊瑚橙按钮。",
+      "Don't 用大量小字号、胶囊和嵌套卡片压缩复杂信息。",
+      "Don't 用装饰性示意图冒充真实高德地图或路线结果。",
+      "Don't 在其他成员视角泄露未授权公开的具体出发地。",
+      "Don't 为了与 PPT 相似而复制不适合交互界面的超大文字或纯展示布局。"
+    ]
+  }
+}
