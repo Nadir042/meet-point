@@ -9,6 +9,7 @@ const { DatabaseSync } = require('node:sqlite');
 const { createServer } = require('../server');
 const { openStore } = require('../shared-store');
 const M = require('../core');
+const amapOrigin = index => ({ ...M.ORIGINS[index], provider: 'amap', placeId: `test-place-${index}`, address: '上海市测试地址', category: '地名地址信息' });
 
 const testMapProvider = () => ({
   async search() {
@@ -60,14 +61,26 @@ test('two independent clients complete the shared activity flow', async () => {
     const joined = await request('/api/activities/join', 'POST', { code, nickname: '小陈' });
     assert.equal(joined.status, 201);
     assert.equal(joined.body.activity.members.length, 2);
-    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: M.ORIGINS[2], mode: '公共交通', preference: '聚餐', budget: 100, shared: false }, joined.body.token);
+    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '火锅', budget: 100, shared: false }, joined.body.token);
     assert.equal(saved.status, 200);
     assert.equal(saved.body.activity.members[1].origin.name, '人民广场');
+    const customPreference = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '其他', preferenceDetail: '清真餐厅', budget: 100, shared: false }, joined.body.token);
+    assert.equal(customPreference.status, 200);
+    assert.equal(customPreference.body.activity.members[1].preference, '清真餐厅');
+    const searched = await fetch(`${base}/api/locations/search?keyword=${encodeURIComponent('人民广场')}`, { headers: { Authorization: `Bearer ${joined.body.token}` } });
+    const searchedBody = await searched.json();
+    assert.equal(searchedBody.success, true);
+    assert.ok(Array.isArray(searchedBody.data.items));
+    const emptyCoordinates = await request('/api/locations/reverse?lng=&lat=', 'GET', null, joined.body.token);
+    assert.equal(emptyCoordinates.status, 400);
+    assert.equal(emptyCoordinates.body.error.code, 'INVALID_REQUEST');
+    const invalidOrigin = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: { ...amapOrigin(1), lng: 999999 }, mode: '步行', preference: '不限', budget: 0, shared: false }, joined.body.token);
+    assert.equal(invalidOrigin.status, 400);
     const hostView = await request(`/api/activities/${id}`, 'GET', null, created.body.token);
     assert.equal(hostView.body.activity.members[1].ready, true);
     assert.equal(hostView.body.activity.members[1].origin, null, 'private origin is hidden from other members');
-    assert.equal(hostView.body.activity.members[1].preference, '聚餐');
-    const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: M.ORIGINS[0], mode: '公共交通', preference: '不限', budget: 150, shared: true }, created.body.token);
+    assert.equal(hostView.body.activity.members[1].preference, '清真餐厅');
+    const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(0), mode: '公共交通', preference: '不限', budget: 150, shared: true }, created.body.token);
     assert.equal(hostReady.body.activity.requirementsReady, true);
     const recommended = await request(`/api/activities/${id}/actions`, 'POST', { action: 'recommend' }, created.body.token);
     assert.equal(recommended.body.activity.status, 'voting');
@@ -116,6 +129,8 @@ test('two independent clients complete the shared activity flow', async () => {
     const uploaded = await request(`/api/activities/${id}/photos`, 'POST', { id: photoId, name: '一起.png', mime: 'image/png', base64: 'iVBORw0KGgo=' }, joined.body.token);
     assert.equal(uploaded.status, 201);
     assert.equal(uploaded.body.activity.journal.photos[0].id, photoId);
+    const fakePhoto = await request(`/api/activities/${id}/photos`, 'POST', { id: crypto.randomUUID(), name: '伪装.png', mime: 'image/png', base64: Buffer.from('not an image').toString('base64') }, joined.body.token);
+    assert.equal(fakePhoto.status, 400);
     const photo = await fetch(`${base}/api/activities/${id}/photos/${photoId}`, { headers: { Authorization: `Bearer ${created.body.token}` } });
     assert.equal(photo.status, 200);
     assert.equal(photo.headers.get('content-type'), 'image/png');

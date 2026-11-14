@@ -771,10 +771,14 @@
     selectedOrigin = self()?.origin || null;
     const a = active(), m = self();
     if (!m) return toast('请先加入活动');
-    openModal('我的出行需求', `<p class="modal-intro">先告诉我们你从哪里出发。具体位置是否向伙伴公开，由你决定。</p><form id="requirements-form">
-      <label>出发地<input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="例如：人民广场"></label><div class="origin-actions"><button type="button" class="button light" id="search-origin">搜索地点</button><button type="button" class="button light" id="use-current-location">${icon('pin')} 使用当前位置</button></div><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">搜索地点，或在你同意后使用设备当前位置。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" class="origin-selected" role="status">${m.origin ? `已选择：${esc(m.origin.name)} · ${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择出发地"}</p>
-      <div class="form-grid"><label>交通方式<select name="mode">${['公共交通', '驾车', '步行', '骑行'].map(mode => `<option ${m.mode === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select></label><label>活动偏好<select name="preference">${M.OPTIONS[a.type].map(p => `<option ${m.preference === p ? 'selected' : ''}>${p}</option>`).join('')}</select></label></div>
-      <label>人均预算上限（元）<input name="budget" type="number" min="0" max="5000" value="${m.budget}" required></label>
+    const preferenceOptions = M.OPTIONS[a.type];
+    const customPreference = m.preference && !preferenceOptions.includes(m.preference) ? m.preference : '';
+    const selectedPreference = customPreference ? '其他' : preferenceOptions.includes(m.preference) ? m.preference : '不限';
+    openModal('我的出行需求', `<p class="modal-intro">先告诉我们你从哪里出发。具体位置是否向伙伴公开，由你决定。</p><form id="requirements-form" novalidate>
+      <label class="requirement-field" data-requirement-field="origin"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>出发地</span><input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="例如：人民广场"><small class="field-error" role="alert"></small></label><div class="origin-actions"><button type="button" class="button light" id="search-origin">搜索地点</button><button type="button" class="button light" id="use-current-location">${icon('pin')} 使用当前位置</button></div><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">搜索地点，或在你同意后使用设备当前位置。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" class="origin-selected" role="status">${m.origin ? `已选择：${esc(m.origin.name)} · ${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择出发地"}</p>
+      <div class="form-grid"><label class="requirement-field" data-requirement-field="mode"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>交通方式</span><select name="mode">${['公共交通', '驾车', '步行', '骑行'].map(mode => `<option ${m.mode === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select><small class="field-error" role="alert"></small></label><label class="requirement-field" data-requirement-field="preference"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>活动偏好</span><select name="preference">${preferenceOptions.map(p => `<option ${selectedPreference === p ? 'selected' : ''}>${p}</option>`).join('')}</select><small class="field-error" role="alert"></small></label></div>
+      <label class="requirement-field" data-requirement-field="preferenceDetail" ${selectedPreference === '其他' ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="请填写具体偏好（20 个字以内）"><small class="field-error" role="alert"></small></label>
+      <label class="requirement-field" data-requirement-field="budget"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>人均预算上限（元）</span><input name="budget" type="number" min="0" max="5000" value="${m.budget}" required><small class="field-error" role="alert"></small></label>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
       <button type="submit" class="button primary full">保存我的需求 ${icon('check')}</button></form>`);
@@ -790,7 +794,7 @@
     status.textContent='正在搜索地点，请稍候…';
     try{
       const a=active();
-      const result=await api('/api/locations/search?activityId='+encodeURIComponent(a.id)+'&keyword='+encodeURIComponent(keyword),'GET',null,sessionFor(a.id).token);
+      const result=await api('/api/locations/search?keyword='+encodeURIComponent(keyword),'GET',null,sessionFor(a.id).token);
       if(!form.isConnected||!document.getElementById('modal').open)return;
       if(input.value.trim()!==keyword){status.textContent='搜索词已修改，请重新搜索。';return;}
       status.textContent=result.items.length?'找到 '+result.items.length+' 个地点，请点击下方地点选择。':'没有找到相关地点，请换一个名称或补充街道信息。';
@@ -805,6 +809,7 @@
           list.replaceChildren();
           status.textContent='';
           form.querySelector('#origin-selected').textContent='详细地址：'+(p.address?.trim() || '暂无详细地址');
+          setRequirementError(form,'origin','');
           input.focus({preventScroll:true});
         });
         list.append(option);
@@ -817,22 +822,79 @@
     if(!button)return;
     const form=button.closest('form'),input=form.querySelector('#origin-keyword');
     const status=form.querySelector('#origin-search-status'),list=form.querySelector('#origin-result');
+    if(!window.isSecureContext){status.textContent='当前位置功能等待域名申请及 HTTPS 配置，请先手动搜索出发地。';return;}
     if(!navigator.geolocation){status.textContent='当前浏览器不支持定位，请手动搜索出发地。';return;}
     button.disabled=true;button.textContent='正在定位…';list.replaceChildren();
     status.textContent='浏览器将询问定位权限；只有你同意后才会读取当前位置。';
     try{
       const position=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:false,timeout:10000,maximumAge:60000}));
       const {longitude:lng,latitude:lat}=position.coords,a=active();
-      const place=await api('/api/locations/reverse?activityId='+encodeURIComponent(a.id)+'&lng='+encodeURIComponent(lng)+'&lat='+encodeURIComponent(lat),'GET',null,sessionFor(a.id).token);
+      const place=await api('/api/locations/reverse?lng='+encodeURIComponent(lng)+'&lat='+encodeURIComponent(lat),'GET',null,sessionFor(a.id).token);
       if(!form.isConnected||!document.getElementById('modal').open)return;
       selectedOrigin=place;input.value=place.name;
       status.textContent='已根据当前位置找到附近地点。';
       form.querySelector('#origin-selected').textContent='已选择：'+place.name+' · '+(place.address?.trim()||'暂无详细地址');
+      setRequirementError(form,'origin','');
     }catch(error){
       if(!form.isConnected)return;
       const denied=error?.code===1;
       status.textContent=denied?'你没有允许定位。可以继续手动搜索出发地。':'当前位置获取失败：'+(error.message||'请稍后重试或手动搜索。');
     }finally{button.disabled=false;button.innerHTML=icon('pin')+' 使用当前位置';}
+  });
+  function requirementErrors(form) {
+    const preference = form.elements.preference.value;
+    const detail = form.elements.preferenceDetail.value.trim();
+    const budget = form.elements.budget.value.trim();
+    return {
+      origin: selectedOrigin ? '' : '请选择并确认出发地',
+      mode: ['公共交通', '驾车', '步行', '骑行'].includes(form.elements.mode.value) ? '' : '请选择交通方式',
+      preference: M.OPTIONS[active().type].includes(preference) ? '' : '请选择活动偏好',
+      preferenceDetail: preference !== '其他' || (detail && detail.length <= 20) ? '' : '请填写 1—20 个字的其他偏好',
+      budget: budget !== '' && Number.isFinite(Number(budget)) && Number(budget) >= 0 && Number(budget) <= 5000 ? '' : '预算应在 0—5000 元之间'
+    };
+  }
+  function setRequirementError(form, name, message, animate = false) {
+    const field = form.querySelector(`[data-requirement-field="${name}"]`);
+    if (!field) return;
+    field.classList.toggle('field-invalid', !!message);
+    field.querySelector('.field-error').textContent = message;
+    const control = field.querySelector('input,select');
+    if (message) control?.setAttribute('aria-invalid', 'true'); else control?.removeAttribute('aria-invalid');
+    if (message && animate) {
+      field.classList.remove('field-attention');
+      void field.offsetWidth;
+      field.classList.add('field-attention');
+    }
+  }
+  function validateRequirements(form, focusFirst = false) {
+    const errors = requirementErrors(form);
+    for (const [name, message] of Object.entries(errors)) setRequirementError(form, name, message, focusFirst);
+    const first = Object.entries(errors).find(([, message]) => message)?.[0];
+    if (first && focusFirst) {
+      const field = form.querySelector(`[data-requirement-field="${first}"]`);
+      field?.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+      field?.querySelector('input,select')?.focus({ preventScroll: true });
+    }
+    return !first;
+  }
+  document.addEventListener('input', event => {
+    const form = event.target.closest('#requirements-form');
+    if (!form) return;
+    if (event.target.id === 'origin-keyword' && event.target.value.trim() !== selectedOrigin?.name) {
+      selectedOrigin = null;
+      form.querySelector('#origin-selected').textContent = '尚未确认出发地，请搜索并选择地点';
+    }
+    if (form.dataset.validationActive === 'true') validateRequirements(form);
+  });
+  document.addEventListener('change', event => {
+    const form = event.target.closest('#requirements-form');
+    if (!form) return;
+    if (event.target.name === 'preference') {
+      const custom = form.querySelector('[data-requirement-field="preferenceDetail"]');
+      custom.hidden = event.target.value !== '其他';
+      if (custom.hidden) custom.querySelector('input').value = '';
+    }
+    if (form.dataset.validationActive === 'true') validateRequirements(form);
   });
   function identityOptions() { return `<p class="panel-tip">${isAccount() ? '本次以登录账号参与。活动昵称可单独修改；未完成活动可在最近一次有效操作后 7 天内恢复。' : '本次以游客身份参与，可在最近一次有效操作后 24 小时内从本浏览器恢复。'}</p>`; }
   const defaultNickname = () => {
@@ -1054,7 +1116,9 @@
         history.replaceState(null, '', url);
         closeModal(); render(); requirements();
       } else if (form.getAttribute('id') === 'requirements-form') {
-        if (await run('requirements', { origin: selectedOrigin, mode: data.get('mode'), preference: data.get('preference'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+        form.dataset.validationActive = 'true';
+        if (!validateRequirements(form, true)) return;
+        if (await run('requirements', { origin: selectedOrigin, mode: data.get('mode'), preference: data.get('preference'), preferenceDetail: data.get('preferenceDetail'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
       } else if (form.getAttribute('id') === 'rename-form') {
         if (await run('rename', { name: data.get('name') }, '昵称已更新')) {
           sessionFor(active().id).name = self().name;

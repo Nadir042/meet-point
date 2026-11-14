@@ -49,6 +49,19 @@ test('a single member or incomplete requirements blocks recommendations', () => 
   a = M.act(a, null, 'join', { name: '伙伴' }, NOW);
   assert.throws(() => M.act(a, a.hostId, 'recommend', {}, NOW), /需求/);
 });
+test('activity preferences use the confirmed lists and validate custom details', () => {
+  assert.deepEqual(M.OPTIONS['聚餐'], ['不限', '火锅', '烧烤', '中餐', '西餐', '咖啡甜品', '其他']);
+  assert.deepEqual(M.OPTIONS['休闲娱乐'], ['不限', 'KTV', '桌游', '电影院', '公园', '商场', '剧本杀', '密室逃脱', '美甲', '手工', '写真', '其他']);
+  assert.deepEqual(M.OPTIONS['线下会面'], ['不限', '学习讨论', '工作交流', '朋友会面', '逛街', '其他']);
+
+  let activity = M.createActivity('自定义偏好', '发起人', '聚餐', NOW);
+  const input = { origin: M.ORIGINS[0], mode: '公共交通', preference: '其他', preferenceDetail: '清真餐厅', budget: 100, shared: false };
+  activity = M.act(activity, activity.hostId, 'requirements', input, NOW);
+  assert.equal(activity.members[0].preference, '清真餐厅');
+  assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preferenceDetail: '' }, NOW), /其他偏好/);
+  assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preferenceDetail: '超'.repeat(21) }, NOW), /20/);
+  assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preference: 'KTV' }, NOW), /活动偏好/);
+});
 test('activity is capped at ten members and repeated names get local suffixes', () => {
   let a = prepared();
   a = M.act(a, null, 'join', { name: '参与者' }, NOW);
@@ -137,7 +150,7 @@ test('zero votes at deadline produces no result; revote starts a fresh 24 hours'
 test('requirements never mutate a voting snapshot; approved refresh clears all old votes', () => {
   let a = seeded();
   const original = JSON.stringify(a.candidates);
-  a = M.act(a, a.members[1].id, 'requirements', { origin: M.ORIGINS[6], mode: '步行', preference: '聚餐', budget: 80, shared: false }, NOW);
+  a = M.act(a, a.members[1].id, 'requirements', { origin: M.ORIGINS[6], mode: '步行', preference: '火锅', budget: 80, shared: false }, NOW);
   assert.equal(JSON.stringify(a.candidates), original);
   a = M.act(a, a.members[1].id, 'request', {}, NOW);
   assert.equal(a.requests.length, 1);
