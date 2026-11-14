@@ -110,12 +110,14 @@ test('zero votes at deadline produces no result; revote starts a fresh 24 hours'
   a = M.tick(a, NOW + M.DAY);
   assert.equal(a.status, 'no-votes');
   assert.equal(a.winningCandidateId, null);
-  const candidates = JSON.stringify(a.candidates);
+  const candidates = a.candidates;
   a = M.act(a, a.hostId, 'revote', {}, NOW + M.DAY + 5000);
   assert.equal(a.round, 2);
   assert.equal(a.deadline, NOW + M.DAY * 2 + 5000);
   assert.deepEqual(a.votes, {});
-  assert.equal(JSON.stringify(a.candidates), candidates);
+  assert.deepEqual(a.candidates, candidates.map(p => ({ ...p, id: 'c_2_' + p.placeId, round: 2 })));
+  assert.deepEqual(a.roundHistory.map(h => h.status), ['no-votes']);
+  assert.throws(() => M.act(a, a.hostId, 'vote', { round: 1, candidateId: candidates[0].id }, NOW + M.DAY + 5000), { code: 'ROUND_STALE' });
 });
 test('requirements never mutate a voting snapshot; approved refresh clears all old votes', () => {
   let a = seeded();
@@ -124,7 +126,17 @@ test('requirements never mutate a voting snapshot; approved refresh clears all o
   assert.equal(JSON.stringify(a.candidates), original);
   a = M.act(a, a.members[1].id, 'request', {}, NOW);
   assert.equal(a.requests.length, 1);
-  a = M.act(a, a.hostId, 'recommend', {}, NOW + 5000);
+  const data = { requestId: a.requests[0].id, decision: 'approved' };
+  const incomplete = structuredClone(a);
+  incomplete.members[1].origin = null;
+  assert.throws(() => M.act(incomplete, a.hostId, 'review-request', data, NOW + 5000), /需求/);
+  assert.equal(incomplete.requests[0].status, 'pending');
+  assert.deepEqual(incomplete.votes, a.votes);
+  const oldCounts = M.tally(a);
+  a = M.act(a, a.hostId, 'review-request', data, NOW + 5000);
+  assert.equal(a.roundHistory[0].status, 'superseded');
+  assert.deepEqual(a.roundHistory[0].voteCounts, oldCounts);
+  assert.equal(Object.hasOwn(a.roundHistory[0], 'votes'), false);
   assert.equal(a.round, 2);
   assert.deepEqual(a.votes, {});
   assert.equal(a.requests[0].status, 'approved');
@@ -189,7 +201,7 @@ test('request rejection requires a reason, stays public and does not change roun
   assert.deepEqual(a.votes, oldVotes);
   a = M.act(a, a.members[1].id, 'request', { reason: '新需求' }, NOW);
   assert.equal(a.requests.length, 2);
-  assert.throws(() => M.act(a, a.members[1].id, 'request', {}, NOW), /待处理/);
+  assert.deepEqual(M.act(a, a.members[1].id, 'request', {}, NOW).requests, a.requests);
 });
 test('guest and account recovery use individual last valid operation, not shared activity time', () => {
   let a = prepared();
