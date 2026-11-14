@@ -439,7 +439,7 @@
       <div class="poi-card-top"><span class="poi-rank">${i >= 0 ? `${M.GROUPS.find(g => g.id === group).name} · 第 ${i + 1} 名` : '已确认的最终集合点'}</span><button class="icon-button" data-action="close-poi" aria-label="关闭地点详情">${icon('close')}</button></div>
       <div class="candidate-body"><div class="candidate-title"><h3 id="poi-title">${esc(p.name)}</h3><div class="score">${p.score.toFixed(1)}<small>/ 10</small></div></div><p class="address">${icon('pin')}${esc(p.area)}</p><p class="poi-description">${esc(p.subtitle)}</p>
         <div class="metrics"><div><small>我的预计用时</small><strong>${mine?.minutes ?? '—'}<span> 分钟</span></strong></div><div><small>全员平均用时</small><strong>${p.average}<span> 分钟</span></strong></div></div>
-        <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${(p.dimensions.preference == null ? '未知' : p.dimensions.preference.toFixed(1))} / 10 分` : `便利度 ${p.dimensions.convenience.toFixed(1)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
+        <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${formatScore(p.dimensions.preference)} / 10 分` : `便利度 ${formatScore(p.dimensions.convenience)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
         <details class="poi-details"><summary>评分依据与成员路线比较</summary>${scoreDetails(p)}</details>
         <div class="vote-row"><span><strong>${count}</strong> 票支持</span><button class="button ${vote === p.id || winner ? 'primary' : 'vote-button'}" data-action="vote" data-value="${p.id}" ${a.status !== 'voting' || a.paused || !canAccess() || a.deadline <= Date.now() ? 'disabled' : ''}>${vote === p.id || winner ? icon('check') : ''}${winner ? '最终集合点' : vote === p.id ? '我已投票' : vote ? '改投这里' : '投票给这里'}</button></div>
         <p class="poi-vote-status">${a.paused ? '活动已暂停，暂不可投票或改票' : a.status === 'voting' ? a.deadline <= Date.now() ? '本轮投票已截止，正在更新结果' : vote === p.id ? '这是你当前的选择，截止前可以改票' : '三组推荐共用每人一票，截止前可以改票' : statusText(a)} · 预计费用：未知</p>
@@ -836,10 +836,13 @@
     const a = active();
     openModal('好的相聚，从一句邀请开始', `<p class="modal-intro">活动：${esc(a.title)}</p><div class="invite-code"><small>活动邀请码</small><strong>${a.code}</strong><button class="button light" data-action="copy">${icon('link')} 复制邀请链接</button></div><div class="notice">${isShared(a) ? '把链接发给伙伴，对方可在自己的设备加入这场活动。' : '这是旧版本机示例；请新建活动来体验跨设备协作。'}</div>${a.status === 'voting' ? '<p class="panel-tip">本轮正在投票，成员名单已锁定。</p>' : ''}`);
   }
+  function formatScore(value) {
+    return Number.isFinite(value) ? value.toFixed(1) : '未知';
+  }
   function scoreDetails(p) {
     const a=active();
     return '<div class="detail-score"><span>综合参考分</span><strong>'+p.score.toFixed(1)+'</strong><p>有效维度等权平均；预算无可靠消费数据时不扣分。</p></div>'+
-    '<div>'+Object.entries(p.dimensions).map(([key,value])=>'<p>'+esc(({fairness:'公平性',time:'整体耗时',preference:'偏好匹配',convenience:'便利性'})[key]||key)+'：'+(value==null?'未知':value.toFixed(1))+'</p>').join('')+'</div>'+
+    '<div>'+Object.entries(p.dimensions).map(([key,value])=>'<p>'+esc(({fairness:'公平性',time:'整体耗时',preference:'偏好匹配',convenience:'便利性'})[key]||key)+'：'+formatScore(value)+'</p>').join('')+'</div>'+
     '<p>'+esc((p.reasons||[]).join('；'))+'</p><table><tr><th>成员</th><th>时间</th><th>费用</th></tr>'+p.routes.map(r=>'<tr><td>'+esc(a.members.find(m=>m.id===r.memberId)?.name||'成员')+'</td><td>'+r.minutes+' 分钟</td><td>'+(r.costStatus==='known'?esc(String(r.cost))+' 元':r.costStatus==='not_applicable'?'不适用':'未知')+'</td></tr>').join('')+'</table><p>仅显示本人和公开位置成员的路线；地图费用为预计费用，驾车油费和停车费未知。</p>';
   }
   function details(id) {

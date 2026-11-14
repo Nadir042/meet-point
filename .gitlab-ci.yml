@@ -1,0 +1,12 @@
+# 供从 GitHub 同步代码的 GitLab 项目运行 CI。
+# GitLab 同步本文件并启动流水线后，执行以下检查。
+image: node:24
+
+stages:
+  - test
+
+check-and-test:
+  stage: test
+  script:
+    - npm run check
+    - npm test
