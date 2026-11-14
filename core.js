@@ -31,11 +31,10 @@
     { id: 'p5', name: '上海图书馆（淮海路馆）', subtitle: '留一段安静的时间给阅读与思考', area: '徐汇区 · 淮海中路', lng: 121.4431, lat: 31.2074, tags: ['线下会面'], preference: ['不限'], budget: 0, transit: 8.9, illustration: 'building', line: '地铁 10 号线', x: 25, y: 73 },
     { id: 'p6', name: '世纪公园', subtitle: '在开阔的绿意里，开启一场轻松会面', area: '浦东新区 · 锦绣路', lng: 121.5501, lat: 31.2157, tags: ['休闲娱乐'], preference: ['赏风景', '不限'], budget: 0, transit: 8.6, illustration: 'park', line: '地铁 2 / 18 号线', x: 85, y: 65 }
   ];
-  const PREFERENCES = ['不限', '聚餐', '逛街', '赏风景'];
   const OPTIONS = {
-    '聚餐': ['不限','火锅','烧烤','中餐','西餐','咖啡甜品','聚餐'],
-    '休闲娱乐': ['不限','KTV','桌游','电影院','公园','商场','剧本杀','密室逃脱','美甲','手工','写真','拼豆','逛街','赏风景','聚餐'],
-    '线下会面': ['不限','学习讨论','工作交流','朋友会面','安静场所','交通便利','逛街','赏风景','聚餐']
+    '聚餐': ['不限', '火锅', '烧烤', '中餐', '西餐', '咖啡甜品', '其他'],
+    '休闲娱乐': ['不限', 'KTV', '桌游', '电影院', '公园', '商场', '剧本杀', '密室逃脱', '美甲', '手工', '写真', '其他'],
+    '线下会面': ['不限', '学习讨论', '工作交流', '朋友会面', '逛街', '其他']
   };
   const oldPreference = value => ({ '本帮菜': '聚餐', '户外散步': '赏风景',  })[value] || value;
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -325,8 +324,10 @@
           assert(origin && typeof origin.name === 'string' && origin.name.trim() && Number.isFinite(origin.lng) && Number.isFinite(origin.lat) && Math.abs(origin.lng) <= 180 && Math.abs(origin.lat) <= 90, '请选择有效出发地');
           assert(['公共交通', '驾车', '步行', '骑行'].includes(data.mode), '请选择交通方式');
           assert(OPTIONS[a.type].includes(data.preference), '请选择适用的活动偏好');
+          const preference = data.preference === '其他' ? String(data.preferenceDetail || '').trim() : data.preference;
+          if (data.preference === '其他') assert(preference && preference.length <= 20, '其他偏好应填写 1—20 个字');
           assert(Number.isFinite(data.budget) && data.budget >= 0 && data.budget <= 5000, '预算应在 0—5000 元之间');
-          Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), mode: data.mode, preference: data.preference, budget: data.budget, shared: !!data.shared });
+          Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), mode: data.mode, preference, budget: data.budget, shared: !!data.shared });
           break;
         }
         case 'recommend': {

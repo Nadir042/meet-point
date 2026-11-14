@@ -61,9 +61,12 @@ test('two independent clients complete the shared activity flow', async () => {
     const joined = await request('/api/activities/join', 'POST', { code, nickname: '小陈' });
     assert.equal(joined.status, 201);
     assert.equal(joined.body.activity.members.length, 2);
-    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '聚餐', budget: 100, shared: false }, joined.body.token);
+    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '火锅', budget: 100, shared: false }, joined.body.token);
     assert.equal(saved.status, 200);
     assert.equal(saved.body.activity.members[1].origin.name, '人民广场');
+    const customPreference = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '其他', preferenceDetail: '清真餐厅', budget: 100, shared: false }, joined.body.token);
+    assert.equal(customPreference.status, 200);
+    assert.equal(customPreference.body.activity.members[1].preference, '清真餐厅');
     const searched = await fetch(`${base}/api/locations/search?keyword=${encodeURIComponent('人民广场')}`, { headers: { Authorization: `Bearer ${joined.body.token}` } });
     const searchedBody = await searched.json();
     assert.equal(searchedBody.success, true);
@@ -76,7 +79,7 @@ test('two independent clients complete the shared activity flow', async () => {
     const hostView = await request(`/api/activities/${id}`, 'GET', null, created.body.token);
     assert.equal(hostView.body.activity.members[1].ready, true);
     assert.equal(hostView.body.activity.members[1].origin, null, 'private origin is hidden from other members');
-    assert.equal(hostView.body.activity.members[1].preference, '聚餐');
+    assert.equal(hostView.body.activity.members[1].preference, '清真餐厅');
     const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(0), mode: '公共交通', preference: '不限', budget: 150, shared: true }, created.body.token);
     assert.equal(hostReady.body.activity.requirementsReady, true);
     const recommended = await request(`/api/activities/${id}/actions`, 'POST', { action: 'recommend' }, created.body.token);

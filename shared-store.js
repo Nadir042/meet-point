@@ -230,7 +230,8 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
           fail(400, '请从高德搜索结果或当前位置中确认出发地');
         const a = M.act(activity, memberId, 'requirements', {
           origin: input.origin, mode: input.mode,
-          preference: input.preference, budget: input.budget, shared: input.shared === true
+          preference: input.preference, preferenceDetail: input.preferenceDetail,
+          budget: input.budget, shared: input.shared === true
         });
         update.run(JSON.stringify(a), id);
         return { activity: project(a, memberId) };

@@ -466,6 +466,14 @@ input::placeholder,textarea::placeholder{color:#918a87;font-size:15px}
 .origin-result-item[aria-pressed=true]{border-color:var(--green);background:var(--green-soft)}
 .origin-result-item small{color:var(--green-dark)}
 .origin-selected{padding:12px 14px;border-radius:12px;background:var(--surface-soft);color:var(--ink);font-size:13px;line-height:1.6}
+.field-label{display:flex;align-items:center;gap:7px}
+.field-alert-mark{display:none;place-items:center;width:18px;height:18px;border-radius:50%;background:#b6422f;color:#fff;font-size:12px;font-weight:800;line-height:1}
+.field-error{display:none;color:#a53928;font-size:12px;font-weight:500;line-height:1.5}
+.requirement-field.field-invalid .field-alert-mark,.requirement-field.field-invalid .field-error{display:grid}
+.requirement-field.field-invalid input,.requirement-field.field-invalid select{border-color:#b6422f;outline:3px solid #b6422f1f}
+.requirement-field.field-attention{animation:requirement-attention .38s ease-out}
+@keyframes requirement-attention{0%,100%{transform:translateX(0)}30%{transform:translateX(-5px)}65%{transform:translateX(4px)}}
+@media(prefers-reduced-motion:reduce){.requirement-field.field-attention{animation:none}}
 .invite-code{border-color:#f2684366;background:var(--green-soft)}
 .invite-code>strong{color:var(--green)}
 .empty-state{border-color:var(--line);background:var(--white)}
