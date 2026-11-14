@@ -372,7 +372,7 @@
       <div class="poi-card-top"><span class="poi-rank">${i >= 0 ? `${M.GROUPS.find(g => g.id === group).name} · 第 ${i + 1} 名` : '已确认的最终集合点'}</span><button class="icon-button" data-action="close-poi" aria-label="关闭地点详情">${icon('close')}</button></div>
       <div class="candidate-body"><div class="candidate-title"><h3 id="poi-title">${esc(p.name)}</h3><div class="score">${p.score.toFixed(1)}<small>/ 10</small></div></div><p class="address">${icon('pin')}${esc(p.area)}</p><p class="poi-description">${esc(p.subtitle)}</p>
         <div class="metrics"><div><small>我的预计用时</small><strong>${mine?.minutes ?? '—'}<span> 分钟</span></strong></div><div><small>全员平均用时</small><strong>${p.average}<span> 分钟</span></strong></div></div>
-        <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${p.dimensions.preference.toFixed(1)} / 10 分` : `便利度 ${p.dimensions.convenience.toFixed(1)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
+        <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${formatScore(p.dimensions.preference)} / 10 分` : `便利度 ${formatScore(p.dimensions.convenience)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
         <details class="poi-details"><summary>评分依据与成员路线比较</summary>${scoreDetails(p)}</details>
         <div class="vote-row"><span><strong>${count}</strong> 票支持</span><button class="button ${vote === p.id || winner ? 'primary' : 'vote-button'}" data-action="vote" data-value="${p.id}" ${a.status !== 'voting' || a.paused || !canAccess() || a.deadline <= Date.now() ? 'disabled' : ''}>${vote === p.id || winner ? icon('check') : ''}${winner ? '最终集合点' : vote === p.id ? '我已投票' : vote ? '改投这里' : '投票给这里'}</button></div>
         <p class="poi-vote-status">${a.paused ? '活动已暂停，暂不可投票或改票' : a.status === 'voting' ? a.deadline <= Date.now() ? '本轮投票已截止，正在更新结果' : vote === p.id ? '这是你当前的选择，截止前可以改票' : '三组推荐共用每人一票，截止前可以改票' : statusText(a)} · 预计费用：未知</p>
@@ -577,10 +577,13 @@
     const a = active();
     openModal('好的相聚，从一句邀请开始', `<p class="modal-intro">活动：${esc(a.title)}</p><div class="invite-code"><small>活动邀请码</small><strong>${a.code}</strong><button class="button light" data-action="copy">${icon('link')} 复制邀请链接</button></div><div class="notice">${isShared(a) ? '把链接发给伙伴，对方可在自己的设备加入这场活动。' : '这是旧版本机示例；请新建活动来体验跨设备协作。'}</div>${a.status === 'voting' ? '<p class="panel-tip">本轮正在投票，成员名单已锁定。</p>' : ''}`);
   }
+  function formatScore(value) {
+    return Number.isFinite(value) ? value.toFixed(1) : '未知';
+  }
   function scoreDetails(p) {
     const a = active();
     return `<div class="detail-score"><span>演示参考分 · 非约定权重</span><strong>${p.score.toFixed(1)}<small> / 10</small></strong><p>各维度采用 0—10 分。三组分别按公平性、偏好匹配、交通便利性优先排序。</p></div>
-      <div class="dimension-list">${[['fairness', '出行公平性', `最长与最短出行时间相差 ${p.gap} 分钟；演示公式：10 − 时间差 / 8`], ['time', '整体耗时', `全员平均 ${p.average} 分钟；演示公式：10 − 平均用时 / 12`], ['preference', '偏好匹配', '演示匹配模型：活动偏好 60%，示例预算适配 40%；并非甲方约定权重'], ['transit', '交通便利', '内置示例站点便利分，待真实地图数据替换']].map(([key, label, help]) => `<div class="dimension"><div><strong>${label}</strong><span>${p.dimensions[key].toFixed(1)}</span></div><div class="progress-track"><span style="width:${p.dimensions[key] * 10}%"></span></div><p>${help}</p></div>`).join('')}</div>
+      <div class="dimension-list">${[['fairness', '出行公平性', `最长与最短出行时间相差 ${p.gap} 分钟；演示公式：10 − 时间差 / 8`], ['time', '整体耗时', `全员平均 ${p.average} 分钟；演示公式：10 − 平均用时 / 12`], ['preference', '偏好匹配', '演示匹配模型：活动偏好 60%，示例预算适配 40%；并非甲方约定权重'], ['convenience', '交通便利', '内置示例站点便利分，待真实地图数据替换']].map(([key, label, help]) => `<div class="dimension"><div><strong>${label}</strong><span>${formatScore(p.dimensions[key])}</span></div>${Number.isFinite(p.dimensions[key]) ? `<div class="progress-track"><span style="width:${p.dimensions[key] * 10}%"></span></div>` : ""}<p>${help}</p></div>`).join('')}</div>
       <h3>本轮成员出行比较</h3><div class="member-table-wrap"><table><thead><tr><th>成员</th><th>预计用时</th><th>预计费用</th></tr></thead><tbody>${p.routes.map(r => `<tr><td>${esc(a.members.find(m => m.id === r.memberId)?.name || '已退出成员')}</td><td>${r.minutes} 分钟</td><td>未知</td></tr>`).join('')}</tbody></table></div>
       <div class="notice">甲方未约定评分权重。本 Demo 使用四维等权均值作为参考分及平票时的本轮综合排序依据，并非已确认的正式算法。路线为直线距离模拟；费用未知，不纳入评分。示例预算不代表真实报价。</div>`;
   }
