@@ -10,10 +10,24 @@ const { createServer } = require('../server');
 const { openStore } = require('../shared-store');
 const M = require('../core');
 
+const testMapProvider = () => ({
+  async search() {
+    return [
+      {provider:'test',placeId:'food-1',name:'测试餐厅甲',address:'测试路 1 号',category:'中餐厅',typecode:'050100',lng:121.47,lat:31.22,rating:4.6},
+      {provider:'test',placeId:'food-2',name:'测试餐厅乙',address:'测试路 2 号',category:'咖啡厅',typecode:'050500',lng:121.45,lat:31.23,rating:4.4},
+      {provider:'test',placeId:'food-3',name:'测试餐厅丙',address:'测试路 3 号',category:'西餐厅',typecode:'050200',lng:121.49,lat:31.21,rating:4.2}
+    ];
+  },
+  async route(origin,destination) {
+    const distanceMeters=Math.round(Math.hypot((origin.lng-destination.lng)*95000,(origin.lat-destination.lat)*111000));
+    return {minutes:Math.max(5,Math.ceil(distanceMeters/500)),distanceMeters,cost:null,costStatus:'unavailable',transfers:0};
+  }
+});
+
 test('two independent clients complete the shared activity flow', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-shared-'));
   const filename = path.join(directory, 'test.sqlite');
-  let store = openStore(filename), server = createServer(store);
+  let store = openStore(filename), server = createServer(store,testMapProvider());
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   async function request(route, method = 'GET', data, token) {
@@ -95,7 +109,7 @@ test('two independent clients complete the shared activity flow', async () => {
     assert.deepEqual(simultaneous.map(result => result.status).sort(), [201, 400]);
     assert.equal((await request(`/api/activities/${capActivity.body.activity.id}`, 'GET', null, capActivity.body.token)).body.activity.members.length, 10);
     await new Promise(resolve => server.close(resolve)); store.close();
-    store = openStore(filename); server = createServer(store);
+    store = openStore(filename); server = createServer(store,testMapProvider());
     assert.equal(store.get(capActivity.body.activity.id, capActivity.body.token).activity.members.length, 10, 'database survives server restart');
   } finally {
     if (server.listening) await new Promise(resolve => server.close(resolve));
