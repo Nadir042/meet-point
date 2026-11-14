@@ -38,7 +38,9 @@
   const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   const round = n => Math.round(n * 10) / 10;
   const clamp = n => Math.max(0, Math.min(10, n));
-  function assert(condition, message) { if (!condition) throw new Error(message); }
+  function assert(condition, message, code, status = 409) {
+    if (!condition) throw Object.assign(new Error(message), code ? { code, status } : {});
+  }
   function availableName(a, requested, actorId = null) {
     assert(typeof requested === 'string', '请输入昵称');
     const base = requested.trim();
@@ -135,6 +137,10 @@
     a.time ||= '18:30';
     a.journal ||= emptyJournal();
     a.groups ||= groupCandidates(a.candidates);
+    a.roundHistory ||= [];
+    a.roundStartedAt ??= a.round ? (a.deadline == null ? a.createdAt : a.deadline - DAY) : null;
+    a.candidates.forEach((p, i) => { p.overallRank ??= i + 1; });
+    if (['completed', 'no-votes', 'cancelled'].includes(a.status)) archiveRound(a, a.status, a.updatedAt);
     a.requests = (a.requests || []).map(r => typeof r === 'string' ? { id: uid(), memberId: r, status: 'pending', reason: '希望按最新需求重新推荐', createdAt: a.updatedAt, round: a.round } : r);
     a.members.forEach(m => { m.identityType ||= 'guest'; m.lastActiveAt ??= a.updatedAt; });
     return a;
@@ -179,32 +185,69 @@
   function tally(a) {
     const validIds = new Set(a.members.map(m => m.id));
     const counts = Object.fromEntries(a.candidates.map(p => [p.id, 0]));
-    for (const [id, vote] of Object.entries(a.votes)) if (validIds.has(id) && vote in counts) counts[vote]++;
+    for (const [id, vote] of Object.entries(a.votes)) if (validIds.has(id) && Object.hasOwn(counts, vote)) counts[vote]++;
     return counts;
   }
-  function settle(a) {
+  function voteStatus(a, memberId) {
+    const voteCounts = tally(a);
+    const votedMembers = Object.values(voteCounts).reduce((sum, count) => sum + count, 0);
+    const myVote = a.votes[memberId];
+    return {
+      round: a.round, status: a.status, paused: a.paused, deadline: a.deadline,
+      remainingMs: a.remainingMs, totalMembers: a.members.length, votedMembers,
+      myVote: Object.hasOwn(voteCounts, myVote) ? myVote : null, voteCounts,
+      allVoted: a.members.length > 0 && votedMembers === a.members.length,
+      winningCandidateId: a.winningCandidateId
+    };
+  }
+  function archiveRound(a, status, now) {
+    if (!a.round || a.roundHistory.some(item => item.round === a.round)) return;
+    a.roundHistory.push({
+      round: a.round, status, startedAt: a.roundStartedAt, endedAt: now,
+      candidates: a.candidates.map(({ id, placeId, name, score, overallRank }) =>
+        ({ id, placeId: placeId || id, name, score, overallRank })),
+      voteCounts: tally(a), winningCandidateId: a.winningCandidateId
+    });
+  }
+  function settle(a, endedAt) {
     const counts = tally(a);
-    const total = Object.values(counts).reduce((s, n) => s + n, 0);
-    if (!total) { a.status = 'no-votes'; a.deadline = null; return; }
-    const winner = a.candidates.reduce((best, p) => counts[p.id] > counts[best.id] ? p : best, a.candidates[0]);
-    a.winningCandidateId = winner.id;
-    a.status = 'completed';
+    const winner = a.candidates.filter(p => counts[p.id] > 0)
+      .sort((x, y) => counts[y.id] - counts[x.id] || x.overallRank - y.overallRank)[0];
+    a.winningCandidateId = winner?.id ?? null;
+    a.status = winner ? 'completed' : 'no-votes';
     a.deadline = null;
+    archiveRound(a, a.status, endedAt);
   }
   function tick(activity, now = Date.now()) {
-    const a = clone(activity);
-    if (a.status === 'voting' && !a.paused && now >= a.deadline) { settle(a); a.updatedAt = now; }
+    const a = migrate(activity);
+    if (a.status === 'voting' && !a.paused && a.deadline !== null && now >= a.deadline) {
+      settle(a, a.deadline);
+      a.updatedAt = now;
+    }
     return a;
   }
-  function startRound(a, now) {
-    a.round++;
+  function startRound(a, candidates, groups, now) {
+    const nextRound = a.round + 1;
+    const ids = new Map();
+    const nextCandidates = candidates.map((p, index) => {
+      const placeId = p.placeId || p.id;
+      const id = `c_${nextRound}_${placeId}`;
+      ids.set(p.id, id);
+      return { ...p, id, placeId, round: nextRound, overallRank: p.overallRank ?? index + 1 };
+    });
+    archiveRound(a, 'superseded', now);
+    a.candidates = nextCandidates;
+    a.groups = Object.fromEntries(Object.entries(groups).map(([group, members]) =>
+      [group, members.map(id => ids.get(id))]));
+    a.round = nextRound;
+    a.roundStartedAt = now;
     a.status = 'voting';
     a.votes = {};
     a.deadline = now + DAY;
     a.remainingMs = null;
   }
   function act(activity, actorId, action, data = {}, now = Date.now()) {
-    const a = migrate(tick(activity, now));
+    const a = tick(activity, now);
     const actor = a.members.find(m => m.id === actorId);
     if (action !== 'join') assert(actor, '当前身份不在活动中');
     if (actor) assert(access(a, actorId, now).allowed, '该身份的活动恢复期限已过，不能继续访问未完成活动');
@@ -215,8 +258,13 @@
       return a;
     }
     if (['feeling', 'comment', 'photos', 'delete-photo', 'delete-comment'].includes(action)) return journalAct(a, actor, action, data, now);
-    assert(!['completed', 'cancelled'].includes(a.status), '活动已结束，不能再修改');
-    const host = () => assert(actorId === a.hostId, '只有发起者可以执行此操作');
+    assert(data.round === undefined || data.round === a.round, '推荐方案已更新，请刷新', 'ROUND_STALE');
+    if (activity.status === 'voting' && a.status !== 'voting' && ['vote', 'finish'].includes(action)) {
+      assert(false, '本轮投票已结束', 'VOTING_CLOSED');
+    }
+    assert(a.status !== 'completed', '活动已结束，不能再修改', 'ACTIVITY_COMPLETED');
+    assert(a.status !== 'cancelled', '活动已结束，不能再修改', 'ACTIVITY_CANCELLED');
+    const host = () => assert(actorId === a.hostId, '只有发起者可以执行此操作', 'NOT_INITIATOR', 403);
     if (action === 'resume') {
       host(); assert(a.paused, '活动没有暂停');
       if (a.status === 'voting') a.deadline = now + a.remainingMs;
@@ -226,12 +274,13 @@
       a.remainingMs = a.status === 'voting' ? Math.max(0, a.deadline - now) : null;
       a.paused = true;
     } else if (action === 'cancel') {
-      host(); a.status = 'cancelled'; a.paused = false; a.deadline = null;
+      host(); a.status = 'cancelled'; a.paused = false; a.deadline = null; a.remainingMs = null;
+      archiveRound(a, 'cancelled', now);
     } else if (action === 'transfer') {
       host(); assert(a.members.some(m => m.id === data.id && m.id !== actorId), '请选择其他有效成员');
       a.hostId = data.id;
     } else {
-      assert(!a.paused, '活动已暂停，请发起者恢复后继续');
+      assert(!a.paused, '活动已暂停，请发起者恢复后继续', 'ACTIVITY_PAUSED');
       switch (action) {
         case 'join': {
           assert(a.status !== 'voting', '投票期间不能加入成员');
@@ -260,26 +309,38 @@
           Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), mode: data.mode, preference: data.preference, budget: data.budget, shared: !!data.shared });
           break;
         }
-        case 'recommend':
+        case 'recommend': {
           host();
-          a.candidates = recommend(a);
-          a.groups = groupCandidates(a.candidates);
-          assert(a.candidates.length, '没有适合的候选，请调整活动需求');
-          a.requests.filter(r => r.status === 'pending').forEach(r => { r.status = 'approved'; r.handledAt = now; r.handledBy = actorId; r.response = '已按最新需求生成三组候选并开启新轮次'; });
-          startRound(a, now);
+          assert(a.round === 0, '已有推荐，请审批当前轮次的重新推荐申请', 'REQUEST_NOT_FOUND');
+          const candidates = recommend(a);
+          assert(candidates.length, '没有适合的候选，请调整活动需求', 'NO_CANDIDATES');
+          startRound(a, candidates, groupCandidates(candidates), now);
           break;
+        }
         case 'request':
-          assert(a.candidates.length, '请先生成推荐');
-          assert(!a.requests.some(r => r.memberId === actorId && r.status === 'pending'), '你已有一条待处理申请');
+          assert(a.candidates.length, '请先生成推荐', 'NO_CANDIDATES');
+          if (a.requests.some(r => r.memberId === actorId && r.round === a.round && r.status === 'pending')) return a;
           assert(data.reason === undefined || (typeof data.reason === 'string' && data.reason.trim().length <= 300), '申请说明不能超过 300 字');
           a.requests.push({ id: uid(), memberId: actorId, status: 'pending', reason: data.reason?.trim() || '希望按最新出行需求重新推荐', round: a.round, createdAt: now });
           break;
+        case 'review-request':
         case 'reject-request': {
           host();
-          const request = a.requests.find(r => r.id === data.id && r.status === 'pending');
-          assert(request, '该申请不存在或已处理');
-          assert(typeof data.reason === 'string' && data.reason.trim() && data.reason.trim().length <= 300, '请填写拒绝原因（1—300 字）');
-          Object.assign(request, { status: 'rejected', response: data.reason.trim(), handledAt: now, handledBy: actorId });
+          const request = a.requests.find(r => r.id === (data.requestId ?? data.id) && r.round === a.round);
+          assert(request, '该申请不存在或已失效', 'REQUEST_NOT_FOUND', 404);
+          assert(request.status === 'pending', '该申请已经处理', 'REQUEST_ALREADY_HANDLED');
+          const decision = action === 'reject-request' ? 'rejected' : data.decision;
+          assert(['approved', 'rejected'].includes(decision), '请选择同意或拒绝');
+          if (decision === 'approved') {
+            const candidates = recommend(a);
+            assert(candidates.length, '没有适合的候选，请调整活动需求', 'NO_CANDIDATES');
+            startRound(a, candidates, groupCandidates(candidates), now);
+          } else {
+            assert(typeof data.reason === 'string' && data.reason.trim() && data.reason.trim().length <= 300,
+              '请填写拒绝原因（1—300 字）', 'REJECT_REASON_REQUIRED', 400);
+          }
+          Object.assign(request, { status: decision, handledAt: now, handledBy: actorId,
+            response: decision === 'approved' ? '已按最新需求开启新轮次' : data.reason.trim() });
           break;
         }
         case 'schedule':
@@ -292,20 +353,20 @@
           actor.identityType = data.identityType;
           break;
         case 'vote':
-          assert(a.status === 'voting', '当前轮次未开放投票');
-          assert(a.candidates.some(p => p.id === data.id), '请选择本轮有效候选');
-          a.votes[actorId] = data.id;
+          assert(a.status === 'voting', '当前轮次未开放投票', 'VOTING_CLOSED');
+          assert(a.candidates.some(p => p.id === (data.candidateId ?? data.id)),
+            '请选择本轮有效候选', 'CANDIDATE_NOT_IN_ROUND', 404);
+          a.votes[actorId] = data.candidateId ?? data.id;
           break;
         case 'finish':
-          host(); assert(a.status === 'voting', '当前没有正在进行的投票');
-          assert(Object.values(tally(a)).reduce((s, n) => s + n, 0) === a.members.length, '全员投票后才能提前结束');
-          settle(a);
+          host(); assert(a.status === 'voting', '当前没有正在进行的投票', 'VOTING_CLOSED');
+          assert(voteStatus(a, actorId).allVoted, '全员投票后才能提前结束', 'NOT_ALL_VOTED');
+          settle(a, now);
           break;
         case 'revote':
-          host(); assert(a.status === 'no-votes', '仅零票截止后可以沿用候选重投');
+          host(); assert(a.status === 'no-votes', '仅零票截止后可以沿用候选重投', 'NOT_ZERO_VOTES');
           assert(ready(a), '需要 2—10 名成员，且需求完整');
-          // Keep the previous candidate snapshot; only votes and the deadline are reset.
-          startRound(a, now);
+          startRound(a, a.candidates, a.groups, now);
           break;
         default: throw new Error('暂不支持该操作');
       }
@@ -346,7 +407,7 @@
       return a;
     });
   }
-  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, recommend, tally, tick, act, visibleMembers, seed, seedMemories, uid };
+  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MeetPoint = api;
 })(typeof window !== 'undefined' ? window : globalThis);

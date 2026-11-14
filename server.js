@@ -21,7 +21,7 @@ async function bodyJson(req, limit = 16_384) {
   catch { const error = new Error('请求内容不是有效 JSON'); error.status = 400; throw error; }
 }
 function createServer(store = openStore()) {
-  return http.createServer(async (req, res) => {
+  const server = http.createServer(async (req, res) => {
   let name;
   try { name = decodeURIComponent(new URL(req.url, 'http://localhost').pathname).slice(1) || 'index.html'; }
   catch { return sendJson(res, 400, { error: '无效地址' }); }
@@ -45,12 +45,21 @@ function createServer(store = openStore()) {
         res.writeHead(200, { 'Content-Type': record.mime, 'Content-Length': record.data.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
         return res.end(record.data);
       }
-      const match = /^api\/activities\/([0-9a-f-]{36})(\/(requirements|actions))?$/.exec(name);
-      if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, store.get(match[1], token));
+      const match = /^api\/activities\/([0-9a-f-]{36})(\/(requirements|actions|vote-history))?$/.exec(name);
+      if (match && !match[2] && req.method === 'GET') return sendJson(res, 200, { success: true, data: store.get(match[1], token) });
+      if (match && match[3] === 'vote-history' && req.method === 'GET')
+        return sendJson(res, 200, { success: true, data: store.history(match[1], token) });
       if (match && match[3] === 'requirements' && req.method === 'PUT') return sendJson(res, 200, store.requirements(match[1], token, await bodyJson(req)));
-      if (match && match[3] === 'actions' && req.method === 'POST') return sendJson(res, 200, store.act(match[1], token, await bodyJson(req)));
+      if (match && match[3] === 'actions' && req.method === 'POST') return sendJson(res, 200, { success: true, data: store.act(match[1], token, await bodyJson(req)) });
       return sendJson(res, 404, { error: '接口不存在' });
-    } catch (error) { return sendJson(res, error.status || 400, { error: error.message }); }
+    } catch (error) {
+      const status = error.status || 400;
+      if (/^api\/activities\/[^/]+(?:\/(?:actions|vote-history))?$/.test(name)) {
+        const code = error.code || ({ 401: 'UNAUTHORIZED', 403: 'NOT_ACTIVITY_MEMBER', 404: 'NOT_FOUND' })[status] || 'INVALID_INPUT';
+        return sendJson(res, status, { success: false, error: { code, message: error.message, retryable: false } });
+      }
+      return sendJson(res, status, { error: error.message });
+    }
   }
   if (!allowed.has(name)) { res.writeHead(404); return res.end('Not found'); }
   if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405); return res.end(); }
@@ -60,6 +69,17 @@ function createServer(store = openStore()) {
     res.end(req.method === 'HEAD' ? undefined : data);
   });
 });
+  let timer;
+  server.on('listening', () => {
+    const settle = () => {
+      try { store.settleExpiredRounds(); }
+      catch (error) { console.error('轮次计票失败', error.message); }
+    };
+    settle();
+    timer = setInterval(settle, 1000).unref();
+  });
+  server.on('close', () => clearInterval(timer));
+  return server;
 }
 if (require.main === module) {
   const server = createServer();

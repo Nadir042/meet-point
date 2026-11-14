@@ -14,6 +14,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
   const db = new DatabaseSync(filename);
   db.exec(`PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = 2000;
     CREATE TABLE IF NOT EXISTS activities (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
     );
@@ -79,12 +80,19 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       fail(400, '账号应为 3—30 位文字、数字或下划线，密码应为 8—128 位');
     return { username, password };
   };
-  const project = (a, viewerId) => ({
-    ...M.migrate(a), viewerId, requirementsReady: M.ready(a),
-    members: M.visibleMembers(a, viewerId).map(m => ({
-      ...m, ready: !!a.members.find(member => member.id === m.id)?.origin
-    }))
-  });
+  const project = (a, viewerId) => {
+    const activity = M.migrate(a);
+    const voteStatus = M.voteStatus(activity, viewerId);
+    const visibleRoutes = new Set(a.members.filter(m => m.shared || m.id === viewerId).map(m => m.id));
+    return {
+      ...activity, viewerId, requirementsReady: M.ready(a), voteStatus,
+      votes: voteStatus.myVote ? { [viewerId]: voteStatus.myVote } : {},
+      candidates: activity.candidates.map(p => ({ ...p, routes: (p.routes || []).filter(r => visibleRoutes.has(r.memberId)) })),
+      members: M.visibleMembers(a, viewerId).map((m, i) => ({
+        ...m, ready: !!a.members[i].origin, originReady: !!a.members[i].origin
+      }))
+    };
+  };
   const authenticate = (id, token) => {
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '请先以活动成员身份加入');
     const row = findSession.get(digest(token), id);
@@ -94,8 +102,9 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     if (!memberId) fail(403, '该账号尚未加入此活动');
     const stored = findById.get(id);
     if (!stored) fail(404, '活动不存在');
-    const activity = M.tick(M.migrate(JSON.parse(stored.payload)));
-    if (activity.status !== JSON.parse(stored.payload).status) update.run(JSON.stringify(activity), id);
+    const before = JSON.parse(stored.payload);
+    const activity = M.tick(before);
+    if (activity.status !== before.status) update.run(JSON.stringify(activity), id);
     if (!M.access(activity, memberId).allowed) {
       if (row) db.prepare('DELETE FROM sessions WHERE token_hash = ? AND activity_id = ?').run(digest(token), id);
       fail(403, '该身份的活动恢复期限已过');
@@ -103,11 +112,24 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     return { activity, memberId };
   };
 
+  const due = db.prepare(`SELECT payload FROM activities
+    WHERE json_extract(payload, '$.status') = 'voting'
+      AND json_extract(payload, '$.paused') = 0
+      AND json_extract(payload, '$.deadline') <= ?`);
   return {
+    settleExpiredRounds(now = Date.now()) {
+      if (!due.get(now)) return;
+      return withWrite(() => {
+        for (const row of due.all(now)) {
+          const activity = M.tick(JSON.parse(row.payload), now);
+          update.run(JSON.stringify(activity), activity.id);
+        }
+      });
+    },
     pruneExpiredGuests() {
       const remove = db.prepare('DELETE FROM sessions WHERE token_hash = ?');
       for (const row of guestSessions.all()) {
-        const activity = M.migrate(JSON.parse(row.payload));
+        const activity = M.tick(JSON.parse(row.payload));
         if (!M.access(activity, row.member_id).allowed) remove.run(row.token_hash);
       }
     },
@@ -139,7 +161,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     listAccountActivities(token) {
       const id = accountFor(token);
       return { activities: accountActivities.all(id).flatMap(row => {
-        const activity = M.migrate(JSON.parse(row.payload));
+        const activity = M.tick(JSON.parse(row.payload));
         return M.access(activity, row.member_id).allowed ? [project(activity, row.member_id)] : [];
       }) };
     },
@@ -187,8 +209,16 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     get(id, token) {
-      const { activity, memberId } = authenticate(id, token);
-      return { activity: project(activity, memberId) };
+      return withWrite(() => {
+        const { activity, memberId } = authenticate(id, token);
+        return { activity: project(activity, memberId) };
+      });
+    },
+    history(id, token) {
+      return withWrite(() => {
+        const { activity } = authenticate(id, token);
+        return { items: activity.roundHistory };
+      });
     },
     requirements(id, token, input) {
       return withWrite(() => {
@@ -202,11 +232,17 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     act(id, token, input) {
-      const allowed = new Set(['requirements', 'recommend', 'request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
+      const allowed = new Set(['requirements', 'recommend', 'request', 'review-request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
       if (!input || !allowed.has(input.action)) fail(400, '不支持该操作');
+      const data = input.data ?? {};
+      if (typeof data !== 'object' || Array.isArray(data)) fail(400, '操作数据格式无效');
+      if (['vote', 'request', 'finish', 'revote'].includes(input.action) &&
+          (!Number.isSafeInteger(data.round) || data.round < 1)) fail(400, '请提交有效轮次');
+      if (input.action === 'vote' && (typeof data.candidateId !== 'string' || !data.candidateId))
+        fail(400, '请提交候选地点 ID');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
-        const a = M.act(activity, memberId, input.action, input.data || {});
+        const a = M.act(activity, memberId, input.action, data);
         update.run(JSON.stringify(a), id);
         if (input.action === 'leave' || input.action === 'remove') {
           const departed = input.action === 'leave' ? memberId : input.data.id;
