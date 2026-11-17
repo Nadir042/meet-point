@@ -11,6 +11,18 @@ const { openStore } = require('../shared-store');
 const M = require('../core');
 const amapOrigin = index => ({ ...M.ORIGINS[index], provider: 'amap', placeId: `test-place-${index}`, address: '上海市测试地址', category: '地名地址信息' });
 
+function legacyGuest(filename, input) {
+  const { createHash, randomBytes } = require('node:crypto');
+  const a = M.createActivity(input.title, input.nickname, '聚餐', Date.now());
+  const token = randomBytes(32).toString('base64url');
+  const db = new DatabaseSync(filename);
+  try {
+    db.prepare('INSERT INTO activities VALUES (?, ?, ?)').run(a.id, a.code, JSON.stringify(a));
+    db.prepare('INSERT INTO sessions VALUES (?, ?, ?)').run(createHash('sha256').update(token).digest('hex'), a.id, a.hostId);
+  } finally { db.close(); }
+  return { activity: a, token };
+}
+
 const testMapProvider = () => ({
   async search() {
     return [
@@ -33,6 +45,12 @@ test('two independent clients complete the shared activity flow', async () => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
   async function request(route, method = 'GET', data, token) {
+    if (!token && method === 'POST' && ['/api/activities', '/api/activities/join'].includes(route)) {
+      const session = store.register({ username: 'test_' + crypto.randomUUID().replaceAll('-', '' ).slice(0, 15), password: 'test-password-123' });
+      const result = await request(route, method, data, session.token);
+      if (result.body.activity) result.body.token = session.token;
+      return result;
+    }
     const response = await fetch(base + route, { method, headers: {
       ...(data ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
@@ -42,10 +60,11 @@ test('two independent clients complete the shared activity flow', async () => {
   }
   try {
     assert.equal((await fetch(base + '/index.html')).status, 200);
+    const hostSession = store.register({ username: 'host_user', password: 'test-password-123' });
     const body = Buffer.from(JSON.stringify({ title: '周末聚餐', nickname: '小林', type: '聚餐', date: '2026-10-29', time: '18:30' }));
     const splitAt = body.indexOf(Buffer.from('周')) + 1;
     const created = await new Promise((resolve, reject) => {
-      const req = http.request(base + '/api/activities', { method: 'POST', headers: { 'Content-Type': 'application/json' } }, res => {
+      const req = http.request(base + '/api/activities', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + hostSession.token } }, res => {
         const chunks = [];
         res.on('data', chunk => chunks.push(chunk));
         res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(Buffer.concat(chunks).toString('utf8')) }));
@@ -54,6 +73,7 @@ test('two independent clients complete the shared activity flow', async () => {
       req.write(body.subarray(0, splitAt));
       req.end(body.subarray(splitAt));
     });
+    created.body.token = hostSession.token;
     assert.equal(created.status, 201);
     assert.equal(created.body.activity.title, '周末聚餐');
     const { id, code } = created.body.activity;
@@ -199,7 +219,7 @@ test('account gathers activities across nicknames and can claim a guest membersh
     assert.deepEqual(new Set(list.body.activities.map(a => a.title)), new Set(['账号活动甲', '账号活动乙']));
     assert.equal((await request(`/api/activities/${first.body.activity.id}`, 'GET', null, accountToken)).status, 200);
     assert.equal((await request('/api/activities/join', 'POST', { code: first.body.activity.code, nickname: '另一个昵称' }, accountToken)).status, 409);
-    const guest = await request('/api/activities', 'POST', activity('游客活动', '游客昵称'));
+    const guest = { body: legacyGuest(path.join(directory, 'test.sqlite'), { title: '游客活动', nickname: '游客昵称' }) };
     assert.equal((await request('/api/account/activities', 'GET', null, accountToken)).body.activities.length, 2);
     const claimed = await request(`/api/activities/${guest.body.activity.id}/claim`, 'POST', { guestToken: guest.body.token }, accountToken);
     assert.equal(claimed.status, 200);
@@ -224,7 +244,7 @@ test('expired guest credential is pruned while the shared activity remains', () 
   const filename = path.join(directory, 'test.sqlite');
   const store = openStore(filename);
   try {
-    const result = store.create({ title: '过期测试', nickname: '游客', type: '聚餐', date: '2026-10-29', time: '18:30' });
+    const result = legacyGuest(filename, { title: '过期测试', nickname: '游客' });
     const db = new DatabaseSync(filename);
     try {
       const activity = JSON.parse(db.prepare('SELECT payload FROM activities WHERE id = ?').get(result.activity.id).payload);
@@ -236,4 +256,45 @@ test('expired guest credential is pruned while the shared activity remains', () 
       assert.throws(() => store.get(activity.id, result.token), /无效或已过期/);
     } finally { db.close(); }
   } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('guests can read legacy activities but every write requires an account', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-readonly-'));
+  const filename = path.join(directory, 'test.sqlite');
+  const store = openStore(filename);
+  const guest = legacyGuest(filename, { title: '旧游客活动', nickname: '游客' });
+  const id = guest.activity.id;
+  const server = createServer(store, testMapProvider());
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const post = (route, body, token) => fetch(base + route, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    body: JSON.stringify(body)
+  });
+  try {
+    assert.equal(store.get(id, guest.token).activity.title, '旧游客活动');
+    assert.deepEqual(store.history(id, guest.token).items, []);
+    for (const token of [undefined, guest.token]) {
+      assert.equal((await post('/api/activities', { title: '活动', nickname: '姓名' }, token)).status, 401);
+      assert.equal((await post('/api/activities/join', { code: guest.activity.code, nickname: '新成员' }, token)).status, 401);
+      for (const action of ['vote', 'pause', 'requirements', 'comment', 'delete-photo', 'recommend', 'review-request']) {
+        const response = await post('/api/activities/' + id + '/actions', {
+          action, data: { round: 1, candidateId: 'candidate', decision: 'approved' }
+        }, token);
+        assert.equal(response.status, 401, action);
+      }
+      assert.throws(() => store.requirements(id, token, {}), { status: 401 });
+      assert.throws(() => store.uploadPhoto(id, token, {}), { status: 401 });
+      assert.throws(() => store.authorizeLocation(token), { status: 401 });
+    }
+    const account = store.register({ username: 'readonly_test', password: 'test-password-123' });
+    store.claim(id, account.token, guest.token);
+    assert.equal(store.act(id, account.token, { action: 'rename', data: { name: '已登录成员' } }).activity.members[0].name, '已登录成员');
+    const created = store.create({ title: '账号活动', nickname: '成员' }, account.token);
+    assert.equal(created.activity.members[0].identityType, 'account');
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
