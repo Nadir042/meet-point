@@ -49,6 +49,14 @@ test('a single member or incomplete requirements blocks recommendations', () => 
   a = M.act(a, null, 'join', { name: '伙伴' }, NOW);
   assert.throws(() => M.act(a, a.hostId, 'recommend', {}, NOW), /需求/);
 });
+test('activity details open requirements until every member is ready', () => {
+  let a = M.createActivity('活动', '发起人', '聚餐', NOW);
+  assert.equal(M.activityDetailView(a), 'members');
+  a = prepared();
+  assert.equal(M.activityDetailView(a), 'recommend');
+  assert.equal(M.activityDetailView({ ...a, requirementsReady: false }), 'members');
+  assert.equal(M.activityDetailView({ ...a, requirementsReady: true }), 'recommend');
+});
 test('activity preferences use the confirmed lists and validate custom details', () => {
   assert.deepEqual(M.OPTIONS['聚餐'], ['不限', '火锅', '烧烤', '中餐', '西餐', '咖啡甜品', '其他']);
   assert.deepEqual(M.OPTIONS['休闲娱乐'], ['不限', 'KTV', '桌游', '电影院', '公园', '商场', '剧本杀', '密室逃脱', '美甲', '手工', '写真', '其他']);
@@ -58,9 +66,16 @@ test('activity preferences use the confirmed lists and validate custom details',
   const input = { origin: M.ORIGINS[0], mode: '公共交通', preference: '其他', preferenceDetail: '清真餐厅', budget: 100, shared: false };
   activity = M.act(activity, activity.hostId, 'requirements', input, NOW);
   assert.equal(activity.members[0].preference, '清真餐厅');
+  activity = M.act(activity, activity.hostId, 'requirements', { ...input, modes: ['步行', '公共交通'], preferences: ['火锅', '其他'] }, NOW);
+  assert.deepEqual(activity.members[0].modes, ['步行', '公共交通']);
+  assert.deepEqual(activity.members[0].preferences, ['火锅', '清真餐厅']);
+  assert.equal(activity.members[0].mode, '步行');
+  assert.equal(activity.members[0].preference, '火锅');
   assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preferenceDetail: '' }, NOW), /其他偏好/);
   assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preferenceDetail: '超'.repeat(21) }, NOW), /20/);
   assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preference: 'KTV' }, NOW), /活动偏好/);
+  assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, preferences: ['不限', '火锅'] }, NOW), /不限/);
+  assert.throws(() => M.act(activity, activity.hostId, 'requirements', { ...input, modes: [] }, NOW), /交通方式/);
 });
 test('activity is capped at ten members and repeated names get local suffixes', () => {
   let a = prepared();
@@ -70,7 +85,7 @@ test('activity is capped at ten members and repeated names get local suffixes', 
   assert.equal(a.members.at(-1).name, '参与者（3）');
   for (let i = 4; i < 10; i++) a = M.act(a, null, 'join', { name: `成员${i}` }, NOW);
   assert.equal(a.members.length, 10);
-  assert.throws(() => M.act(a, null, 'join', { name: '第十一人' }, NOW), /10/);
+  assert.throws(() => M.act(a, null, 'join', { name: '第十一人' }, NOW), error => error.code === 'ACTIVITY_FULL' && error.status === 400);
 });
 test('members can rename themselves without changing identity or taking another name', () => {
   let a = prepared();
@@ -102,6 +117,16 @@ test('membership is frozen throughout voting, including paused voting', () => {
   assert.throws(() => M.act(a, a.hostId, 'remove', { id: a.members[1].id }, NOW), /投票期间/);
   const paused = M.act(a, a.hostId, 'pause', {}, NOW);
   assert.throws(() => M.act(paused, null, 'join', { name: '新伙伴' }, NOW), /暂停/);
+});
+test('the host must transfer ownership before leaving', () => {
+  let a = prepared();
+  const formerHost = a.hostId;
+  const nextHost = a.members[1].id;
+  assert.throws(() => M.act(a, formerHost, 'leave', {}, NOW), /先移交权限/);
+  a = M.act(a, formerHost, 'transfer', { id: nextHost }, NOW);
+  a = M.act(a, formerHost, 'leave', {}, NOW);
+  assert.equal(a.hostId, nextHost);
+  assert.equal(a.members.some(member => member.id === formerHost), false);
 });
 test('pause freezes the deadline; resume preserves exactly the remaining time', () => {
   const a = seeded();
@@ -300,7 +325,7 @@ test('legacy migration preserves candidates, votes and old requests while adding
     delete candidate.dimensions.convenience;
   }
   a.requests = [a.members[1].id];
-  a.members.forEach(m => { delete m.identityType; delete m.lastActiveAt; });
+  a.members.forEach(m => { delete m.identityType; delete m.lastActiveAt; delete m.modes; delete m.preferences; });
   const migrated = M.migrate(a);
   assert.deepEqual(migrated.votes, a.votes);
   assert.equal(migrated.remainingMs, 1234);
@@ -311,6 +336,8 @@ test('legacy migration preserves candidates, votes and old requests while adding
   assert.ok(migrated.candidates.every(candidate => !Object.hasOwn(candidate.dimensions, 'transit')));
   assert.equal(migrated.requests[0].status, 'pending');
   assert.equal(migrated.members[0].lastActiveAt, a.updatedAt);
+  assert.deepEqual(migrated.members[0].modes, [a.members[0].mode]);
+  assert.deepEqual(migrated.members[0].preferences, [a.members[0].preference]);
   assert.ok(M.validDate(migrated.date));
   assert.deepEqual(migrated.journal.photos, []);
 });
