@@ -11,6 +11,7 @@
   --paper: #ffffff;
   --surface-soft: #f6f1ec;
   --border-strong: #cfc3bb;
+  --danger: #b42318;
   --shadow-soft: 0 6px 24px #1f191a0f;
   --radius: 16px;
   font-family: var(--font);

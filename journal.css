@@ -66,3 +66,17 @@ body[data-surface="workspace"] .journal-title-line i{color:#f26843;font-style:no
 .journal-hero-day .day-entry>p{font-size:16px}
 @media(max-width:760px){.journal-hero-day{padding:36px 24px 28px;box-shadow:7px 11px 0 #6e584c,0 18px 34px #6e49311c}.journal-hero-day .day-heading h2{font-size:31px}}
 @media(max-width:480px){.journal-hero-day{padding:35px 22px 28px;margin:35px 8px 8px}.journal-hero-day::before{right:-10px;left:-10px}}
+
+/* Pending photo previews */
+.pending-photo-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;color:#806d50;font-size:12px}
+.pending-photo-summary small{color:#9b8767;font-size:12px}
+.pending-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px}
+.pending-photo-grid[hidden]{display:none}
+.pending-photo{position:relative;min-width:0;margin:0}
+.pending-photo img{display:block;width:100%;aspect-ratio:1;object-fit:cover;border:1px solid #d9ccb1;background:#e9dfc8}
+.pending-photo figcaption{overflow:hidden;margin-top:6px;color:#806d50;font-size:12px;text-overflow:ellipsis;white-space:nowrap}
+.pending-photo-remove{position:absolute;top:4px;right:4px;display:grid;place-items:center;width:44px;height:44px;padding:6px;border:0;background:transparent;color:#fff;cursor:pointer}
+.pending-photo-remove::before{content:"";position:absolute;width:30px;height:30px;border:1px solid #ffffff80;border-radius:50%;background:#382f2bc7;box-shadow:0 3px 10px #2b211e38}
+.pending-photo-remove .icon{position:relative;width:16px;height:16px}
+.pending-photo-remove:focus-visible{outline:3px solid #6b7256;outline-offset:2px}
+@media(max-width:480px){.pending-photo-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.pending-photo-summary{align-items:flex-start;flex-direction:column;gap:2px}}

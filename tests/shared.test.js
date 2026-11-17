@@ -31,9 +31,10 @@ const testMapProvider = () => ({
       {provider:'test',placeId:'food-3',name:'测试餐厅丙',address:'测试路 3 号',category:'西餐厅',typecode:'050200',lng:121.49,lat:31.21,rating:4.2}
     ];
   },
-  async route(origin,destination) {
+  async route(origin,destination,mode) {
     const distanceMeters=Math.round(Math.hypot((origin.lng-destination.lng)*95000,(origin.lat-destination.lat)*111000));
-    return {minutes:Math.max(5,Math.ceil(distanceMeters/500)),distanceMeters,cost:null,costStatus:'unavailable',transfers:0};
+    const extraMinutes={公共交通:0,驾车:5,骑行:10,步行:20}[mode]??30;
+    return {minutes:Math.max(5,Math.ceil(distanceMeters/500))+extraMinutes,distanceMeters,cost:null,costStatus:'unavailable',transfers:0};
   }
 });
 
@@ -81,12 +82,13 @@ test('two independent clients complete the shared activity flow', async () => {
     const joined = await request('/api/activities/join', 'POST', { code, nickname: '小陈' });
     assert.equal(joined.status, 201);
     assert.equal(joined.body.activity.members.length, 2);
-    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '火锅', budget: 100, shared: false }, joined.body.token);
+    const saved = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), modes: ['公共交通', '骑行'], preferences: ['火锅'], budget: 100, shared: false }, joined.body.token);
     assert.equal(saved.status, 200);
     assert.equal(saved.body.activity.members[1].origin.name, '人民广场');
-    const customPreference = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), mode: '公共交通', preference: '其他', preferenceDetail: '清真餐厅', budget: 100, shared: false }, joined.body.token);
+    assert.deepEqual(saved.body.activity.members[1].modes, ['公共交通', '骑行']);
+    const customPreference = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(2), modes: ['公共交通', '骑行'], preferences: ['火锅', '其他'], preferenceDetail: '清真餐厅', budget: 100, shared: false }, joined.body.token);
     assert.equal(customPreference.status, 200);
-    assert.equal(customPreference.body.activity.members[1].preference, '清真餐厅');
+    assert.deepEqual(customPreference.body.activity.members[1].preferences, ['火锅', '清真餐厅']);
     const searched = await fetch(`${base}/api/locations/search?keyword=${encodeURIComponent('人民广场')}`, { headers: { Authorization: `Bearer ${joined.body.token}` } });
     const searchedBody = await searched.json();
     assert.equal(searchedBody.success, true);
@@ -99,12 +101,13 @@ test('two independent clients complete the shared activity flow', async () => {
     const hostView = await request(`/api/activities/${id}`, 'GET', null, created.body.token);
     assert.equal(hostView.body.activity.members[1].ready, true);
     assert.equal(hostView.body.activity.members[1].origin, null, 'private origin is hidden from other members');
-    assert.equal(hostView.body.activity.members[1].preference, '清真餐厅');
-    const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(0), mode: '公共交通', preference: '不限', budget: 150, shared: true }, created.body.token);
+    assert.deepEqual(hostView.body.activity.members[1].preferences, ['火锅', '清真餐厅']);
+    const hostReady = await request(`/api/activities/${id}/requirements`, 'PUT', { origin: amapOrigin(0), modes: ['步行', '公共交通'], preferences: ['不限'], budget: 150, shared: true }, created.body.token);
     assert.equal(hostReady.body.activity.requirementsReady, true);
     const recommended = await request(`/api/activities/${id}/actions`, 'POST', { action: 'recommend' }, created.body.token);
     assert.equal(recommended.body.activity.status, 'voting');
     assert.ok(recommended.body.activity.candidates.length > 0);
+    assert.ok(recommended.body.activity.candidates.every(candidate => candidate.routes.find(route => route.memberId === recommended.body.activity.viewerId)?.mode === '公共交通'));
     assert.equal(Object.hasOwn(recommended.body.activity, 'resultId'), false);
     assert.equal(Object.hasOwn(recommended.body.activity, 'remaining'), false);
     assert.ok(recommended.body.activity.candidates.every(candidate => Object.hasOwn(candidate.dimensions, 'convenience')));
@@ -179,6 +182,7 @@ test('two independent clients complete the shared activity flow', async () => {
     for (let i = 2; i <= 9; i++) assert.equal((await request('/api/activities/join', 'POST', { code: capCode, nickname: `成员${i}` })).status, 201);
     const simultaneous = await Promise.all(['第十位', '第十一位'].map(nickname => request('/api/activities/join', 'POST', { code: capCode, nickname })));
     assert.deepEqual(simultaneous.map(result => result.status).sort(), [201, 400]);
+    assert.equal(simultaneous.find(result => result.status === 400).body.error.code, 'ACTIVITY_FULL');
     assert.equal((await request(`/api/activities/${capActivity.body.activity.id}`, 'GET', null, capActivity.body.token)).body.activity.members.length, 10);
     await new Promise(resolve => server.close(resolve)); store.close();
     store = openStore(filename); server = createServer(store,testMapProvider());

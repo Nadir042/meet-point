@@ -6,10 +6,55 @@ window.createMeetPointJournal = function (ctx) {
   let selectedDate = getState().activities.filter(a => a.status === 'completed').sort((a, b) => b.date.localeCompare(a.date))[0]?.date || M.dateKey();
   let month = selectedDate.slice(0, 7);
   let busy = false;
+  let pendingPhotos = [];
   const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
   const name = (a, id) => a.members.find(m => m.id === id)?.name || '原活动成员';
   const ownId = a => getState().identities[a.id] || a.hostId;
   const allowed = a => M.access(a, ownId(a)).allowed;
+  const photoKey = file => `${file.name}|${file.size}|${file.lastModified}`;
+  function clearPendingPhotos() {
+    pendingPhotos.forEach(photo => URL.revokeObjectURL(photo.url));
+    pendingPhotos = [];
+  }
+  function renderPendingPhotos(message = null) {
+    const form = document.getElementById('photo-form');
+    if (!form) return;
+    const grid = form.querySelector('[data-photo-preview]');
+    const count = form.querySelector('[data-photo-preview-count]');
+    const slots = form.querySelector('[data-photo-preview-slots]');
+    const button = form.querySelector('button[type="submit"]');
+    const activityId = form.closest('[data-journal-id]')?.dataset.journalId;
+    const activity = getState().activities.find(item => item.id === activityId);
+    grid.hidden = pendingPhotos.length === 0;
+    grid.innerHTML = pendingPhotos.map(photo => `<figure class="pending-photo"><img src="${esc(photo.url)}" alt="待保存：${esc(photo.file.name)}"><button type="button" class="pending-photo-remove" data-action="photo-pending-remove" data-value="${photo.id}" aria-label="移除待保存照片：${esc(photo.file.name)}">${icon('close')}</button><figcaption title="${esc(photo.file.name)}">${esc(photo.file.name)}</figcaption></figure>`).join('');
+    count.textContent = pendingPhotos.length ? `已选择 ${pendingPhotos.length} 张，保存前可继续添加` : '尚未选择照片';
+    if (activity) slots.textContent = `本场还可继续选择 ${Math.max(0, 12 - activity.journal.photos.length - pendingPhotos.length)} 张`;
+    button.disabled = busy || pendingPhotos.length === 0;
+    if (message !== null) form.querySelector('#photo-progress').textContent = message;
+  }
+  function appendPendingPhotos(files, activity) {
+    const types = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    const keys = new Set(pendingPhotos.map(photo => photo.key));
+    const skipped = { duplicate: 0, type: 0, size: 0, limit: 0 };
+    let added = 0;
+    for (const file of files) {
+      const key = photoKey(file);
+      if (!types.has(file.type)) { skipped.type++; continue; }
+      if (file.size > 8 * 1024 * 1024) { skipped.size++; continue; }
+      if (keys.has(key)) { skipped.duplicate++; continue; }
+      if (activity.journal.photos.length + pendingPhotos.length >= 12) { skipped.limit++; continue; }
+      pendingPhotos.push({ id: M.uid(), file, key, url: URL.createObjectURL(file) });
+      keys.add(key);
+      added++;
+    }
+    const notes = [];
+    if (added) notes.push(`已添加 ${added} 张`);
+    if (skipped.duplicate) notes.push(`跳过 ${skipped.duplicate} 张重复照片`);
+    if (skipped.type) notes.push(`${skipped.type} 张格式不支持`);
+    if (skipped.size) notes.push(`${skipped.size} 张超过 8 MB`);
+    if (skipped.limit) notes.push(`${skipped.limit} 张超过剩余名额`);
+    renderPendingPhotos(notes.length ? `${notes.join('；')}。` : '没有可添加的照片。');
+  }
   async function hydrate() {
     media.hydrate();
     for (const img of document.querySelectorAll('img[data-remote-photo]')) {
@@ -50,6 +95,7 @@ window.createMeetPointJournal = function (ctx) {
       <section class="memory-shelf"><div class="section-heading"><div><span class="eyebrow">LITTLE MOMENTS, LONG MEMORIES</span><h2>那些想再翻一遍的日子</h2></div><button class="text-button" data-action="view" data-value="overview">所有活动 ${icon('arrow')}</button></div><div class="memory-strip">${completed.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 3).map(a => `<button class="memory-card" data-action="open-journal" data-value="${a.id}"><span class="paper-tape"></span>${cover(a)}<span class="memory-date">${esc(a.date.replaceAll('-', '.'))} ${a.isExample ? ' / 示例手账' : ''}</span><strong>${esc(a.title)}</strong><span>${a.members.length} 位伙伴 · ${a.journal.photos.length} 张照片 · ${a.journal.comments.length} 条留言</span></button>`).join('') || '<p class="empty-memories">确定集合点后，这场相聚就会出现在这里。</p>'}</div></section><p class="journal-storage-note">多人活动的照片与手账保存在服务器；标为本机示例的历史记录仍保存在当前浏览器。</p>`;
   }
   function open(id = active().id) {
+    clearPendingPhotos();
     const a = visibleActivities().find(a => a.id === id);
     if (!a || !allowed(a)) return toast('该身份已超过未完成活动的恢复期限');
     activate(a.id, 'calendar'); selectedDate = a.date; month = a.date.slice(0, 7); render();
@@ -60,7 +106,7 @@ window.createMeetPointJournal = function (ctx) {
       <div class="journal-identity-row"><label>以谁的身份记录<select id="journal-identity" aria-label="切换手账成员" ${isShared(a) ? 'disabled' : ''}>${(isShared(a) ? a.members.filter(m => m.id === current) : a.members).map(m => `<option value="${m.id}" ${m.id === current ? 'selected' : ''}>${esc(m.name)}${m.id === a.hostId ? ' · 发起者' : ''}</option>`).join('')}</select></label><button class="text-button" data-action="journal-planning" data-value="${a.id}">查看活动与推荐 ${icon('arrow')}</button></div>
       ${a.status === 'cancelled' ? '<div class="notice">已取消的活动只保留记录，不能新增照片或留言。</div>' : !ctx.canWrite() ? '<div class="notice">游客仅可查看，注册或登录后即可添加照片和留言。</div>' : ''}
       <section class="journal-section"><div class="section-heading"><h3>01 / 把这一刻留下</h3><span>${a.journal.photos.length} / 12 张</span></div>${a.journal.photos.length ? `<div class="journal-gallery">${a.journal.photos.map(p => `<figure class="journal-photo"><button class="photo-open" data-action="photo-open" data-value="${p.id}" aria-label="放大查看${esc(p.name)}"><img data-photo="${p.id}" ${isShared(a) ? `data-remote-photo="${a.id}"` : ''} alt="${esc(p.name)}" class="photo-loading"></button><figcaption>${esc(name(a, p.memberId))}<span>${esc(p.name)}</span></figcaption>${p.memberId === current && !locked ? `<button class="text-button danger" data-action="photo-delete" data-value="${p.id}">删除照片</button>` : ''}</figure>`).join('')}</div>` : '<div class="photo-empty"><span>▧</span><p>还没有照片。把今天的光线、笑脸和小确幸，贴在这里。</p></div>'}
-      ${!locked ? `<form id="photo-form" class="photo-upload"><label>添加聚会照片<input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple required></label><p class="panel-tip">JPG / PNG / WebP，每张不超过 8 MB。保存时自动压缩，每场最多 12 张；${isShared(a) ? '上传后供活动成员查看。' : '本机示例仅存于当前浏览器。'}</p><button type="submit" class="button light">＋ 保存选中的照片</button><span id="photo-progress" role="status"></span></form>` : ''}</section>
+      ${!locked ? `<form id="photo-form" class="photo-upload"><label>添加聚会照片<input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label><div class="pending-photo-summary"><span data-photo-preview-count>尚未选择照片</span><small data-photo-preview-slots>本场还可继续选择 ${12 - a.journal.photos.length} 张</small></div><div class="pending-photo-grid" data-photo-preview hidden></div><p class="panel-tip">JPG / PNG / WebP，每张不超过 8 MB。保存时自动压缩，每场最多 12 张；${isShared(a) ? '上传后供活动成员查看。' : '本机示例仅存于当前浏览器。'}</p><button type="submit" class="button light" disabled>＋ 保存选中的照片</button><span id="photo-progress" role="status" aria-live="polite"></span></form>` : ''}</section>
       <section class="journal-section"><div class="section-heading"><h3>02 / 当时的心情</h3><span>每个人，都有自己的这一页</span></div><div class="feeling-list">${a.journal.feelings.map(f => `<blockquote><p>${esc(f.text)}</p><footer>${esc(name(a, f.memberId))}<span>${timeLabel(f.updatedAt)}</span></footer></blockquote>`).join('') || '<p class="journal-empty-text">等你写下第一段感受。</p>'}</div>${!locked ? `<form id="feeling-form"><label>${mine ? '编辑我的感受' : '写下我的感受'}<textarea name="text" rows="3" maxlength="1000" required placeholder="想记住的，或许只是一个很小的瞬间……">${esc(mine?.text || '')}</textarea></label><button type="submit" class="button primary">${mine ? '保存修改' : '收进手账'} ${icon('check')}</button></form>` : ''}</section>
       <section class="journal-section"><div class="section-heading"><h3>03 / 留给彼此的话</h3><span>${a.journal.comments.length} 条留言</span></div><div class="journal-comments">${a.journal.comments.map(c => `<article class="journal-comment">${avatar({ name: name(a, c.memberId) }, Math.max(0, a.members.findIndex(m => m.id === c.memberId)), true)}<div><header><strong>${esc(name(a, c.memberId))}</strong><time>${timeLabel(c.createdAt)}</time></header><p>${esc(c.text)}</p>${c.memberId === current && !locked ? `<button class="text-button muted" data-action="comment-delete" data-value="${c.id}">删除我的留言</button>` : ''}</div></article>`).join('') || '<p class="journal-empty-text">说一句「下次还要一起」，也很好。</p>'}</div>${!locked ? '<form id="comment-form"><label>给伙伴留句话<textarea name="text" rows="2" maxlength="1000" required placeholder="今天很开心，下次见！"></textarea></label><button type="submit" class="button primary">留下这句话 →</button></form>' : ''}</section></article>`, true);
     document.getElementById('modal').classList.add('journal-modal');
@@ -76,17 +122,22 @@ window.createMeetPointJournal = function (ctx) {
       busy = true;
       const getLatest = () => getState().activities.find(a => a.id === activityId);
       if (form.getAttribute('id') === 'photo-form') {
-        const files = data.getAll('photos').filter(f => f.size);
+        const files = pendingPhotos.map(photo => photo.file);
         if (!files.length) throw new Error('请选择至少一张照片');
         if (getLatest().journal.photos.length + files.length > 12) throw new Error('每场聚会最多保留 12 张照片');
         form.querySelector('button[type="submit"]').disabled = true;
         const prepared = [];
         for (let i = 0; i < files.length; i++) {
           const progress = document.getElementById('photo-progress'); if (progress) progress.textContent = `正在处理 ${i + 1} / ${files.length} 张…`;
-          prepared.push(await media.prepare(files[i]));
+          try { prepared.push(await media.prepare(files[i])); }
+          catch (error) { throw new Error(`${files[i].name}：${error.message}`); }
         }
         if (isShared(getLatest())) {
-          for (const p of prepared) await uploadSharedPhoto(p);
+          for (let i = 0; i < prepared.length; i++) {
+            await uploadSharedPhoto(prepared[i]);
+            const saved = pendingPhotos.find(photo => photo.key === photoKey(files[i]));
+            if (saved) { URL.revokeObjectURL(saved.url); pendingPhotos = pendingPhotos.filter(photo => photo.id !== saved.id); }
+          }
         } else {
           M.act(getLatest(), actorId, 'photos', { photos: prepared });
           for (const p of prepared) { await media.put(p); stored.push(p.id); }
@@ -100,7 +151,11 @@ window.createMeetPointJournal = function (ctx) {
       toast(error.message);
       const button = form.querySelector('button[type="submit"]'); if (button) button.disabled = false;
       const progress = document.getElementById('photo-progress'); if (progress) progress.textContent = '未保存，请检查后重试。';
-    } finally { busy = false; }
+      if (form.getAttribute('id') === 'photo-form') renderPendingPhotos('未保存，请检查后重试。');
+    } finally {
+      busy = false;
+      if (form.getAttribute('id') === 'photo-form') renderPendingPhotos();
+    }
     return true;
   }
   function shift(delta) {
@@ -122,6 +177,13 @@ window.createMeetPointJournal = function (ctx) {
     'create-on-date': () => create(selectedDate),
     'open-journal': open,
     'journal-planning': id => { document.getElementById('modal').close(); activate(id, 'recommend'); render(); },
+    'photo-pending-remove': id => {
+      const photo = pendingPhotos.find(item => item.id === id);
+      if (!photo) return;
+      URL.revokeObjectURL(photo.url);
+      pendingPhotos = pendingPhotos.filter(item => item.id !== id);
+      renderPendingPhotos(`已移除“${photo.file.name}”。`);
+    },
     'comment-delete': async id => { await perform('delete-comment', { id }); open(); render(); },
     'photo-delete': async id => {
       if (!confirm('删除这张自己上传的照片？此操作无法撤销。')) return;
@@ -134,16 +196,24 @@ window.createMeetPointJournal = function (ctx) {
     'photo-open': async id => {
       const p = active().journal.photos.find(p => p.id === id);
       if (!p || !allowed(active())) return;
+      clearPendingPhotos();
       const source = isShared(active()) ? await sharedPhotoUrl(active().id, id) : await media.url(id);
       if (!source) return toast('这张照片的文件已不存在');
       openModal('这一刻', `<div class="photo-lightbox"><img src="${esc(source)}" alt="${esc(p.name)}"><p>${esc(p.name)} · ${esc(name(active(), p.memberId))}</p><button class="button light" data-action="open-journal" data-value="${active().id}">返回这一天</button></div>`, true);
     }
   };
   async function change(target) {
+    if (target.matches('#photo-form input[name="photos"]')) {
+      const activityId = target.closest('[data-journal-id]')?.dataset.journalId;
+      const activity = getState().activities.find(item => item.id === activityId);
+      if (activity) appendPendingPhotos([...target.files], activity);
+      target.value = '';
+    }
     if (target.id === 'calendar-month' && /^\d{4}-\d{2}$/.test(target.value)) { setDate(target.value + '-01'); render(); }
     if (target.id === 'journal-identity' && !isShared(active())) {
       getState().identities[active().id] = target.value; ctx.save(); open();
     }
   }
+  document.getElementById('modal').addEventListener('close', clearPendingPhotos);
   return { page, open, submit, actions, change, setDate, hydrate };
 };
