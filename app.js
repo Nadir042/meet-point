@@ -400,7 +400,7 @@
       });
       if (!response.ok) {
         let message = '地图暂时无法加载';
-        try { message = (await response.json()).error || message; } catch {}
+        try { const body = await response.json(); message = body.error?.message || (typeof body.error === 'string' ? body.error : message); } catch {}
         throw new Error(message);
       }
       const blob = await response.blob();

@@ -25,6 +25,62 @@ test('Amap static map returns image bytes and keeps the key inside the provider 
   assert.match(requested.searchParams.get('markers'),/121\.475200,31\.219400/);
 });
 
+test('static map provider errors explain failures without exposing upstream secrets', async () => {
+  for (const [infocode, expectedCode, message] of [
+    ['10002', 'MAP_PROVIDER_ERROR', /静态地图错误 10002.*接口权限/],
+    ['10005', 'MAP_PROVIDER_ERROR', /静态地图错误 10005.*IP 白名单/],
+    ['10003', 'MAP_QUOTA_EXCEEDED', /今日地图调用配额已用尽/],
+    ['10044', 'MAP_QUOTA_EXCEEDED', /静态地图错误 10044/],
+    ['secret-key', 'MAP_PROVIDER_ERROR', /静态地图错误 UNKNOWN/]
+  ]) {
+    const provider = createAmap({key:'secret-key',fetchImpl:async () =>
+      Response.json({status:'0',infocode,info:'upstream text with secret-key'})});
+    await assert.rejects(provider.staticMap([{lng:121.47,lat:31.22}]), error => {
+      assert.equal(error.code, expectedCode);
+      assert.match(error.message, message);
+      assert.doesNotMatch(error.message, /secret-key|upstream text/);
+      return true;
+    });
+  }
+});
+
+test('static map endpoint returns useful errors and retries after provider recovery', async () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  const token = 'a'.repeat(43);
+  const activity = {id,groups:{fairness:['p1']},candidates:[{id:'p1',lng:121.47,lat:31.22}]};
+  const store = {
+    pruneExpiredGuests(){},
+    get(requestedId,requestedToken){
+      assert.equal(requestedId,id);
+      assert.equal(requestedToken,token);
+      return {activity};
+    }
+  };
+  let calls = 0;
+  const provider = createAmap({key:'server-only-key',fetchImpl:async () => {
+    if (++calls === 1) return Response.json({status:'0',infocode:'10005'});
+    return new Response(Uint8Array.from([137,80,78,71]),{headers:{'Content-Type':'image/png'}});
+  }});
+  const server = createServer(store,provider);
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  const url = `http://127.0.0.1:${server.address().port}/api/activities/${id}/static-map?group=fairness`;
+  const headers = {Authorization:`Bearer ${token}`};
+  try {
+    const failed = await fetch(url,{headers});
+    assert.equal(failed.status,502);
+    const failure = await failed.json();
+    assert.equal(failure.code,'MAP_PROVIDER_ERROR');
+    assert.match(failure.error,/静态地图错误 10005.*IP 白名单/);
+    assert.doesNotMatch(JSON.stringify(failure),/server-only-key/);
+    const recovered = await fetch(url,{headers});
+    assert.equal(recovered.status,200);
+    assert.equal(recovered.headers.get('content-type'),'image/png');
+    assert.deepEqual([...new Uint8Array(await recovered.arrayBuffer())],[137,80,78,71]);
+    assert.equal((await fetch(url,{headers})).status,200);
+    assert.equal(calls,2,'failed requests must not block retries; recovered images should be cached');
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
 test('authenticated static map endpoint selects the requested Top3 and reuses its cache', async () => {
   const id='11111111-1111-4111-8111-111111111111';
   const token='a'.repeat(43);

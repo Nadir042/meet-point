@@ -62,7 +62,7 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch}={}){
         if(!contentType.startsWith('image/')){
           let code='UNKNOWN';
           try{const body=await response.json();code=String(body.infocode??body.errcode??'UNKNOWN');}catch{}
-          throw fail(['10003','10044'].includes(code)?'MAP_QUOTA_EXCEEDED':'MAP_PROVIDER_ERROR',code==='10003'?'今日地图调用配额已用尽':'地图图片暂时不可用',false);
+          throw fail(['10003','10044'].includes(code)?'MAP_QUOTA_EXCEEDED':'MAP_PROVIDER_ERROR',code==='10003'?'今日地图调用配额已用尽':`静态地图错误 ${/^\d{1,10}$/.test(code)?code:'UNKNOWN'}：请检查 Web 服务 Key 的静态地图接口权限、IP 白名单及配额`,false);
         }
         const body=Buffer.from(await response.arrayBuffer());
         if(!body.length||body.length>5*1024*1024)throw fail('MAP_PROVIDER_ERROR','地图图片响应无效',true);
