@@ -44,7 +44,6 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
   const update = db.prepare('UPDATE activities SET payload = ? WHERE id = ?');
   const addSession = db.prepare('INSERT INTO sessions (token_hash, activity_id, member_id) VALUES (?, ?, ?)');
   const findSession = db.prepare('SELECT member_id FROM sessions WHERE token_hash = ? AND activity_id = ?');
-  const findAnySession = db.prepare('SELECT activity_id FROM sessions WHERE token_hash = ?');
   const addPhoto = db.prepare('INSERT INTO photos (id, activity_id, member_id, mime, data) VALUES (?, ?, ?, ?, ?)');
   const findPhoto = db.prepare('SELECT mime, data FROM photos WHERE id = ? AND activity_id = ?');
   const deletePhoto = db.prepare('DELETE FROM photos WHERE id = ? AND activity_id = ?');
@@ -57,11 +56,6 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     db.exec('BEGIN IMMEDIATE');
     try { const result = operation(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
-  };
-  const makeToken = (a, memberId) => {
-    const token = randomBytes(32).toString('base64url');
-    addSession.run(digest(token), a.id, memberId);
-    return token;
   };
   const accountFor = token => {
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '请先登录账号');
@@ -186,12 +180,11 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if (typeof input.title !== 'string' || typeof input.nickname !== 'string' ||
           input.title.length > 40 || input.nickname.length > 16) fail(400, '请填写有效的活动名称和昵称');
       return withWrite(() => {
-        const accountId = accountFor(accountToken);
         const a = M.createActivity(input.title, input.nickname, input.type, Date.now(), { date: input.date, time: input.time, identityType: 'account' });
         // Retrying a rare code collision must not overwrite another invitation.
         while (findByCode.get(a.code)) a.code = randomBytes(3).toString('hex').toUpperCase();
         insert.run(a.id, a.code, JSON.stringify(a));
-        if (accountId) db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, a.hostId);
+        db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, a.hostId);
         return { activity: project(a, a.hostId), token: null };
       });
     },
@@ -202,12 +195,11 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       return withWrite(() => {
         const stored = findByCode.get(code);
         if (!stored) fail(404, '邀请码不存在');
-        const accountId = accountFor(accountToken);
-        if (accountId && findAccountMember.get(accountId, JSON.parse(stored.payload).id)) fail(409, '该账号已经参与此活动');
+        if (findAccountMember.get(accountId, JSON.parse(stored.payload).id)) fail(409, '该账号已经参与此活动');
         const a = M.act(JSON.parse(stored.payload), null, 'join', { name: input.nickname, identityType: 'account' });
         update.run(JSON.stringify(a), a.id);
         const memberId = a.members.at(-1).id;
-        if (accountId) db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, memberId);
+        db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, memberId);
         return { activity: project(a, memberId), token: null };
       });
     },

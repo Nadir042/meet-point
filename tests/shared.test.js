@@ -298,4 +298,3 @@ test('guests can read legacy activities but every write requires an account', as
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
-
