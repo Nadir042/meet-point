@@ -295,7 +295,31 @@
     clearTimeout(pageAlertTimer);
     pageAlertTimer = setTimeout(() => alert.remove(), 5000);
   }
+  let recommendationJob = null;
+  function updateRecommendationJob() {
+    const buttons=document.querySelectorAll('[data-action="recommend"], [data-action="approve-request"]');
+    for(const button of buttons){
+      if(recommendationJob){
+        if(!button.dataset.idleLabel){button.dataset.idleLabel=button.innerHTML;button.dataset.idleDisabled=String(button.disabled);}
+        button.disabled=true;button.setAttribute('aria-busy','true');
+        button.textContent='正在生成推荐…';
+      }else if(button.dataset.idleLabel){
+        button.innerHTML=button.dataset.idleLabel;button.disabled=button.dataset.idleDisabled==='true';
+        delete button.dataset.idleLabel;delete button.dataset.idleDisabled;button.removeAttribute('aria-busy');
+      }
+    }
+    let status=document.getElementById('recommendation-job-status');
+    if(recommendationJob){
+      if(!status){status=document.createElement('p');status.id='recommendation-job-status';status.className='notice';status.setAttribute('role','status');document.querySelector('.recommend-toolbar')?.after(status);}
+      status.textContent='正在查询地点和所选交通方式的路线，请勿重复点击。人数及交通方式较多时可能需要数分钟；完成或失败后会自动提示。';
+    }else status?.remove();
+  }
   async function run(action, data = {}, message = '已更新') {
+    const generates=action==='recommend'||(action==='review-request'&&data.decision==='approved');
+    if(generates&&recommendationJob)return false;
+    let timer;
+    if(generates){recommendationJob={started:Date.now()};updateRecommendationJob();timer=setInterval(updateRecommendationJob,1000);}
+
     try {
       const sharedId = isShared(active()) ? active().id : null;
       await perform(action, data);
@@ -314,6 +338,8 @@
       }
       toast(error.message);
       return false;
+    } finally {
+      if(generates){clearInterval(timer);recommendationJob=null;updateRecommendationJob();}
     }
   }
   function avatar(m, index, small = false) {
@@ -763,6 +789,7 @@
         target?.focus({ preventScroll: true });
       }
     }
+    updateRecommendationJob();
     if (view === 'recommend' && !restricted) queueMicrotask(() => loadStaticMap());
   }
   function openModal(title, body, wide = false, variant = '') {

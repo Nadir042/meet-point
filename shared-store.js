@@ -240,7 +240,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if(!M.ready(activity)) fail(400,'请所有成员先填写完整需求');
       M.act(activity, memberId, input.action, input.data || {});
       const version=JSON.stringify(activity);
-      const signal=AbortSignal.timeout(30000);
+      const signal=AbortSignal.timeout(300000);
       const bounded={search:(...args)=>provider.search(args[0],args[1],undefined,signal),route:(...args)=>provider.route(...args,signal)};
       const result=await require('./recommendation').recommend(activity,bounded);
       return withWrite(()=>{

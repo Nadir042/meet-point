@@ -1,11 +1,23 @@
 'use strict';
 const {fail}=require('./recommendation');
 const number=v=>v!==null&&v!==undefined&&v!==''&&!Array.isArray(v)&&Number.isFinite(Number(v))?Number(v):null;
-function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch}={}){
+const queues=new Map();
+function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch,qps=Number(process.env.AMAP_QPS)||2}={}){
+  const interval=Math.ceil(1000/Math.max(0.1,Math.min(20,qps)))+20;
+  async function pace(path,signal){
+    const id=key+'|'+path;
+    const previous=queues.get(id)||Promise.resolve();
+    const current=previous.catch(()=>{}).then(async()=>{
+      signal?.throwIfAborted();
+      await require('node:timers/promises').setTimeout(interval,undefined,{signal});
+    });
+    queues.set(id,current);await current;signal?.throwIfAborted();
+  }
   async function request(path,params,signal){
     if(!key)throw fail('MAP_PROVIDER_ERROR','请配置后端 AMAP_KEY');
     for(let attempt=0;attempt<2;attempt++){
       try{
+        await pace(path,signal);
         const url=new URL('https://restapi.amap.com/'+path);url.search=new URLSearchParams({...params,key});
         const response=await fetchImpl(url,{signal:signal?AbortSignal.any([signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000)});
         if(response.status>=500&&attempt===0)continue;
@@ -18,9 +30,14 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch}={}){
             '10002':'当前 Key 没有该接口权限，请检查服务授权',
             '10003':'今日调用配额已用尽',
             '10005':'服务器出口 IP 不在 Key 的 IP 白名单中',
-            '10009':'Key 平台不匹配，请使用 Web 服务类型的 Key'
+            '10009':'Key 平台不匹配，请使用 Web 服务类型的 Key',
+            '10021':'地图接口每秒请求量超限，请降低 AMAP_QPS，并检查队友是否共用账号同时调用'
           };
           // Do not echo provider text or request URLs: these may contain secrets.
+          if(['10014','10019','10020','10021','10022'].includes(code)){
+            if(attempt===0){await require('node:timers/promises').setTimeout(1200,undefined,{signal});continue;}
+            throw fail('MAP_RATE_LIMITED','高德错误 '+code+'：每秒请求量超限，请降低 AMAP_QPS，稍后重试',true);
+          }
           throw fail(['10003','10044'].includes(code)?'MAP_QUOTA_EXCEEDED':'MAP_PROVIDER_ERROR',
             `高德错误 ${/^\d{1,10}$/.test(code)?code:'UNKNOWN'}：${hints[code]||'请在高德控制台检查接口授权、配额和安全设置'}`,false);
         }
@@ -31,8 +48,17 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch}={}){
   const location=p=>{const [lng,lat]=String(p.location).split(',').map(Number);return {provider:'amap',placeId:p.id,name:p.name,address:typeof p.address==='string'?p.address:'',category:p.type||'',typecode:p.typecode||'',lng,lat};};
   return {
     async search(keyword,center,city='上海',signal){
-      const body=await request(center?'v3/place/around':'v3/place/text',{keywords:keyword,city,offset:'20',extensions:'all',...(center?{location:`${center.lng.toFixed(6)},${center.lat.toFixed(6)}`,radius:'20000'}:{citylimit:'true'})},signal);
-      return (body.pois||[]).map(p=>({...location(p),rating:number(p.biz_ext?.rating)}));
+      const terms=[...new Set(String(keyword||'').split('|').map(s=>s.trim()).filter(Boolean))].slice(0,12);
+      const results=[],seen=new Set();
+      for(const term of terms){
+        const body=await request(center?'v3/place/around':'v3/place/text',{keywords:term,city,offset:'20',extensions:'all',...(center?{location:`${center.lng.toFixed(6)},${center.lat.toFixed(6)}`,radius:'20000'}:{citylimit:'true'})},signal);
+        for(const p of body.pois||[]){
+          const item={...location(p),rating:number(p.biz_ext?.rating)};
+          const id=item.placeId||[item.name,item.lng,item.lat].join('|');
+          if(!seen.has(id)){seen.add(id);results.push(item);}
+        }
+      }
+      return results;
     },
     async reverse(lng,lat){const b=await request('v3/geocode/regeo',{location:`${lng},${lat}`,extensions:'all'});const p=b.regeocode?.pois?.[0];if(!p)throw fail('NO_CANDIDATES','当前位置附近没有可确认地点');return location(p);},
     async route(origin,destination,mode,signal){

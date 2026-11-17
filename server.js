@@ -97,7 +97,7 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
       }
       return sendJson(res, 404, { error: '接口不存在' });
     } catch (error) {
-      const status = error.status || ({ MAP_TIMEOUT: 504, MAP_QUOTA_EXCEEDED: 429, MAP_PROVIDER_ERROR: 502 }[error.code]) || 400;
+      const status = error.status || ({ MAP_RATE_LIMITED: 429, MAP_TIMEOUT: 504, MAP_QUOTA_EXCEEDED: 429, MAP_PROVIDER_ERROR: 502 }[error.code]) || 400;
       if (/^api\/locations\/(?:search|reverse)$/.test(name) || /^api\/activities\/[^/]+(?:\/(?:requirements|actions|vote-history))?$/.test(name)) {
         const code = error.code || ({ 401: 'UNAUTHORIZED', 403: 'NOT_ACTIVITY_MEMBER', 404: 'ACTIVITY_NOT_FOUND' })[status] || 'INVALID_REQUEST';
         return sendJson(res, status, { success: false, error: { code, message: error.message, retryable: !!error.retryable } });
