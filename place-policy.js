@@ -14,4 +14,8 @@ function suitable(place,type){
 }
 const aliases={'公园':['公园','风景'], '电影院':['电影院','影城'], '咖啡甜品':['咖啡','甜品','糕点'], 'KTV':['KTV','卡拉OK'], '中餐':['中餐','中式'], '商场':['商场','购物中心'], '安静场所':['咖啡','茶','图书馆'], '学习讨论':['咖啡','图书馆'], '工作交流':['咖啡','茶','会议'], '朋友会面':['咖啡','茶']};
 function matches(place,preference){return (aliases[preference]||[preference]).some(v=>(place.name+' '+place.category).toLowerCase().includes(v.toLowerCase()));}
-module.exports={policies,suitable,matches};
+function searchTerms(preference){
+  const semantic={'学习讨论':['咖啡厅','图书馆'],'工作交流':['咖啡厅','茶馆'],'朋友会面':['咖啡厅','茶馆'],'安静场所':['咖啡厅','图书馆'],'交通便利':['咖啡厅','茶馆'],'咖啡甜品':['咖啡厅','甜品店'],'赏风景':['公园'],'逛街':['商场'],'聚餐':['餐饮服务']};
+  return semantic[preference]||[preference];
+}
+module.exports={policies,suitable,matches,searchTerms};

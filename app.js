@@ -123,6 +123,7 @@
   let menuOpen = false;
   let focusBeforeModal = null;
   let toastTimer;
+  let pageAlertTimer;
   let lastAccessState = null;
   const active = () => state.activities.find(a => a.id === state.activeId) || state.activities[0];
   const sessionFor = (id, profileId = profiles.activeId) => sharedSessions[sessionKey(profileId, id)];
@@ -235,6 +236,7 @@
     }
   }
   async function perform(action, data = {}) {
+    if (!accountAuth) { openAccount('login'); throw new Error('请先注册或登录后使用此功能'); }
     if (isShared(active())) {
       const id = active().id;
       const result = action === 'requirements'
@@ -279,7 +281,45 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $('#toast').classList.remove('visible'), 4000);
   }
+  function showPageAlert(message) {
+    document.getElementById('page-alert')?.remove();
+    const alert = document.createElement('div');
+    alert.id = 'page-alert';
+    alert.className = 'page-alert';
+    alert.setAttribute('role', 'alert');
+    alert.setAttribute('aria-live', 'assertive');
+    alert.setAttribute('aria-atomic', 'true');
+    alert.textContent = message;
+    ($('#modal').open ? $('#modal') : document.body).append(alert);
+    requestAnimationFrame(() => alert.classList.add('visible'));
+    clearTimeout(pageAlertTimer);
+    pageAlertTimer = setTimeout(() => alert.remove(), 5000);
+  }
+  let recommendationJob = null;
+  function updateRecommendationJob() {
+    const buttons=document.querySelectorAll('[data-action="recommend"], [data-action="approve-request"]');
+    for(const button of buttons){
+      if(recommendationJob){
+        if(!button.dataset.idleLabel){button.dataset.idleLabel=button.innerHTML;button.dataset.idleDisabled=String(button.disabled);}
+        button.disabled=true;button.setAttribute('aria-busy','true');
+        button.textContent='正在生成推荐…';
+      }else if(button.dataset.idleLabel){
+        button.innerHTML=button.dataset.idleLabel;button.disabled=button.dataset.idleDisabled==='true';
+        delete button.dataset.idleLabel;delete button.dataset.idleDisabled;button.removeAttribute('aria-busy');
+      }
+    }
+    let status=document.getElementById('recommendation-job-status');
+    if(recommendationJob){
+      if(!status){status=document.createElement('p');status.id='recommendation-job-status';status.className='notice';status.setAttribute('role','status');document.querySelector('.recommend-toolbar')?.after(status);}
+      status.textContent='正在查询地点和所选交通方式的路线，请勿重复点击。人数及交通方式较多时可能需要数分钟；完成或失败后会自动提示。';
+    }else status?.remove();
+  }
   async function run(action, data = {}, message = '已更新') {
+    const generates=action==='recommend'||(action==='review-request'&&data.decision==='approved');
+    if(generates&&recommendationJob)return false;
+    let timer;
+    if(generates){recommendationJob={started:Date.now()};updateRecommendationJob();timer=setInterval(updateRecommendationJob,1000);}
+
     try {
       const sharedId = isShared(active()) ? active().id : null;
       await perform(action, data);
@@ -298,6 +338,8 @@
       }
       toast(error.message);
       return false;
+    } finally {
+      if(generates){clearInterval(timer);recommendationJob=null;updateRecommendationJob();}
     }
   }
   function avatar(m, index, small = false) {
@@ -326,10 +368,13 @@
   function header() {
     const profile = currentProfile();
     const identityName = profile ? profile.name : '本机示例';
-    const navs = [['overview', '我的活动', 'grid'], ['recommend', '集合点推荐', 'compass'], ['members', '成员与需求', 'people'], ['feedback', '意见反馈', 'chat']];
+    const detailView = ['members', 'recommend'].includes(view);
+    const navs = detailView
+      ? [['overview', '返回活动目录', 'arrow', 'nav-back'], ['members', '成员与需求', 'people'], ['recommend', '集合点推荐', 'pin'], ['feedback', '意见反馈', 'chat']]
+      : [['overview', '我的活动', 'grid'], ['feedback', '意见反馈', 'chat']];
     return `<header class="site-header">
       <a class="site-brand" href="#" data-action="landing-home" aria-label="返回 MeetPoint 首页"><span class="workspace-brand-word"><b>Meet</b><i></i><b>Point</b></span><small>一起选个方便见面的地方</small></a>
-      <div class="workspace-nav-cluster"><button class="workspace-calendar-shortcut ${view === 'calendar' ? 'active' : ''}" data-action="view" data-value="calendar" aria-label="相聚日历" title="相聚日历">${icon('clock')}</button><nav id="primary-nav" class="primary-nav ${menuOpen ? 'is-open' : ''}" aria-label="主导航">${navs.map(([id, label, iconName]) => `<button class="top-nav-item ${view === id ? 'active' : ''}" ${view === id ? 'aria-current="page"' : ''} data-action="view" data-value="${id}">${icon(iconName)}<span>${label}</span></button>`).join('')}</nav></div>
+      <div class="workspace-nav-cluster"><button class="workspace-calendar-shortcut ${view === 'calendar' ? 'active' : ''}" data-action="view" data-value="calendar" aria-label="相聚日历" title="相聚日历">${icon('clock')}</button><nav id="primary-nav" class="primary-nav ${detailView ? 'detail-nav' : ''} ${menuOpen ? 'is-open' : ''}" aria-label="主导航">${navs.map(([id, label, iconName, className = '']) => `<button class="top-nav-item ${className} ${view === id ? 'active' : ''}" ${view === id ? 'aria-current="page"' : ''} data-action="view" data-value="${id}">${icon(iconName)}<span>${label}</span></button>`).join('')}</nav></div>
       <div class="header-account"><button class="text-button identity-kind" data-action="identity-info" aria-label="身份与设置：${esc(identityName)}">${identityAvatar(identityName, profiles.activeId)}<span>${esc(identityName)}</span></button></div>
       <button class="menu-toggle button light" data-action="toggle-menu" aria-expanded="${menuOpen}" aria-controls="primary-nav">菜单</button>
     </header>`;
@@ -586,16 +631,16 @@
     const activities = visibleActivities();
     return `<section class="overview-hero"><div class="overview-hero-copy"><h1>大家在哪儿见<span class="heading-dot">？</span></h1><p>告诉我们每个人从哪里出发，一起选出更公平、更方便的集合点。</p><div class="overview-primary-actions"><button class="button primary" data-action="create">${icon('plus')} 发起一次见面</button><button class="button light" data-action="join">${icon('link')} 使用邀请码加入</button></div></div><figure class="overview-illustration"><img src="./assets/workspace-ticket.png" alt="手绘人物正在查看集合地点"><figcaption>路线不同，也可以在刚刚好的地方见面。</figcaption></figure></section>
       <ol class="overview-flow" aria-label="MeetPoint 使用流程"><li><span>01</span><div><strong>发起活动</strong><small>确定时间和活动类型</small></div></li><li><span>02</span><div><strong>伙伴填写</strong><small>提交出发地和偏好</small></div></li><li><span>03</span><div><strong>推荐与投票</strong><small>比较真实路线后共同决定</small></div></li></ol>
-      <div class="overview-tools"><span>当前身份相关</span><button class="text-button" data-action="identity-info">${isAccount() ? '我的账号' : '身份设置'}</button>${isAccount() ? '<button class="text-button" data-action="sample-journal">查看示例手账</button>' : '<button class="text-button" data-action="new-profile">＋ 新游客身份</button><button class="text-button" data-action="account-login">注册／登录</button>'}${profiles.activeId === 'examples' ? `<button class="text-button" data-action="sample">${icon('plus')} 新建示例活动</button>` : ''}</div>
-      <div class="section-heading overview-section-heading"><div><h2>相聚目录</h2><p>正在参与和已经留下回忆的活动，都在这里。</p></div><span>${activities.length} 场</span></div><div class="activity-directory">${activities.map((a, i) => `<article class="activity-entry"><span class="activity-paper-tag ${i % 2 ? 'tilt-right' : 'tilt-left'}">${isShared(a) ? '多人共享' : '本机示例'} · ${statusText(a)}</span><div class="activity-entry-copy"><h2>${esc(a.title)}</h2><p>${esc(a.date)} ${esc(a.time)}<span>·</span>${esc(a.type)}<span>·</span>${a.members.length} 位伙伴</p></div><div class="stacked-avatars">${a.members.slice(0, 5).map((m, index) => avatar(m, index, true)).join('')}</div><button class="text-button activity-entry-link" data-action="open-activity" data-value="${a.id}">进入活动 ${icon('arrow')}</button></article>`).join('') || `<div class="empty-state compact overview-empty"><img src="./assets/workspace-graduate.png" alt="手绘人物举起毕业证书"><p>${isAccount() ? '这个账号还没有参与活动。使用邀请码加入，或创建一场新活动。' : '这个游客身份还没有参与活动。使用邀请码加入，或创建一场新活动。'}</p></div>`}</div><div class="data-note">${isAccount() ? '这里汇总本账号以不同昵称参与的活动。示例手账单独展示，不计入我的活动。' : '当前只显示所选游客身份参与的活动。切换到“本机示例”可查看引导数据；同一浏览器内的游客切换不提供账号级隐私保护。'}</div>`;
+      <div class="overview-tools"><span>当前身份相关</span><button class="text-button" data-action="identity-info">${isAccount() ? '我的账号' : '身份设置'}</button>${isAccount() ? '<button class="text-button" data-action="sample-journal">查看示例手账</button>' : '<button class="text-button" data-action="account-login">注册／登录</button>'}${profiles.activeId === 'examples' ? `<button class="text-button" data-action="sample">${icon('plus')} 新建示例活动</button>` : ''}</div>
+      <div class="section-heading overview-section-heading"><div><h2>相聚目录</h2><p>正在参与和已经留下回忆的活动，都在这里。</p></div><span>${activities.length} 场</span></div><div class="activity-directory">${activities.map((a, i) => `<article class="activity-entry"><span class="activity-paper-tag ${i % 2 ? 'tilt-right' : 'tilt-left'}">${isShared(a) ? '多人共享' : '本机示例'} · ${statusText(a)}</span><div class="activity-entry-copy"><h2>${esc(a.title)}</h2><p>${esc(a.date)} ${esc(a.time)}<span>·</span>${esc(a.type)}<span>·</span>${a.members.length} 位伙伴</p></div><div class="stacked-avatars">${a.members.slice(0, 5).map((m, index) => avatar(m, index, true)).join('')}</div><button class="text-button activity-entry-link" data-action="open-activity" data-value="${a.id}">进入活动 ${icon('arrow')}</button></article>`).join('') || `<div class="empty-state compact overview-empty"><img src="./assets/workspace-graduate.png" alt="手绘人物举起毕业证书"><p>${isAccount() ? '这个账号还没有参与活动。使用邀请码加入，或创建一场新活动。' : '游客可浏览示例，注册或登录后即可创建和加入活动。'}</p></div>`}</div><div class="data-note">${isAccount() ? '这里汇总本账号以不同昵称参与的活动。示例手账单独展示，不计入我的活动。' : '游客仅可浏览。创建、加入、投票及编辑内容需要注册或登录。'}</div>`;
   }
   function membersPage() {
     const a = active();
     const members = M.visibleMembers(a, viewer());
     return `${activityHeader()}<section class="panel members-page"><div class="panel-heading"><h3>每个人的出行偏好</h3><button class="button primary" data-action="requirements" ${terminal(a) || a.paused ? 'disabled' : ''}>编辑我的需求</button></div>
-      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>预算上限</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(m.mode)}</td><td>${esc(m.preference)}</td><td>¥${m.budget}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
+      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>预算上限</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(M.memberModes(m).join('、'))}</td><td>${esc(M.memberPreferences(m).join('、'))}</td><td>¥${m.budget}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
       <div class="notice">${icon('lock')} 具体出发地只对本人或经本人授权的其他成员展示。此 Demo 的身份切换仅用于演示。</div>
-      <div class="inline">${isHost() ? `<button class="button light" data-action="invite">邀请伙伴</button><button class="text-button" data-action="manage">管理活动</button>` : `<button class="text-button danger" data-action="leave" ${terminal(a) || a.paused || a.status === 'voting' ? 'disabled' : ''}>退出活动</button>`}</div></section>`;
+      <div class="inline activity-member-actions">${isHost() ? `<button class="button light" data-action="invite">邀请伙伴</button><button class="text-button" data-action="manage">管理活动</button>` : ''}<button class="text-button danger" data-action="leave">退出活动</button></div></section>`;
   }
   function feedbackPage() {
     ensureDemoFeedback();
@@ -623,7 +668,7 @@
   function landingHeader() {
     const accountActions = accountAuth
       ? `<button class="landing-workspace" data-action="landing-enter"><span>进入工作台</span>${icon('arrow')}</button>`
-      : `<button class="landing-workspace" data-action="account-login"><span>进入工作台</span>${icon('arrow')}</button><button class="landing-register" data-action="account-register">注册</button>`;
+      : `<button class="landing-workspace" data-action="account-login"><span>进入工作台</span>${icon('arrow')}</button><button class="landing-register" data-action="account-register">注册</button><button class="text-button" data-action="browse">游客浏览</button>`;
     return `<header class="landing-header">
       <div class="landing-header-inner">
         <a class="landing-brand" href="#landing-top" data-action="landing-section" data-value="landing-top" aria-label="MeetPoint 首页"><span>Meet</span><i></i><span>Point</span></a>
@@ -744,6 +789,7 @@
         target?.focus({ preventScroll: true });
       }
     }
+    updateRecommendationJob();
     if (view === 'recommend' && !restricted) queueMicrotask(() => loadStaticMap());
   }
   function openModal(title, body, wide = false, variant = '') {
@@ -772,12 +818,16 @@
     const a = active(), m = self();
     if (!m) return toast('请先加入活动');
     const preferenceOptions = M.OPTIONS[a.type];
-    const customPreference = m.preference && !preferenceOptions.includes(m.preference) ? m.preference : '';
-    const selectedPreference = customPreference ? '其他' : preferenceOptions.includes(m.preference) ? m.preference : '不限';
+    const selectedModes = M.memberModes(m);
+    const storedPreferences = M.memberPreferences(m);
+    const customPreference = storedPreferences.find(preference => !preferenceOptions.includes(preference)) || '';
+    const selectedPreferences = [...storedPreferences.filter(preference => preferenceOptions.includes(preference)), ...(customPreference ? ['其他'] : [])];
+    const choice = (name, value, checked) => `<label class="multi-choice-option"><input type="checkbox" name="${name}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(value)}</span></label>`;
     openModal('我的出行需求', `<p class="modal-intro">先告诉我们你从哪里出发。具体位置是否向伙伴公开，由你决定。</p><form id="requirements-form" novalidate>
       <label class="requirement-field" data-requirement-field="origin"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>出发地</span><input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="例如：人民广场"><small class="field-error" role="alert"></small></label><div class="origin-actions"><button type="button" class="button light" id="search-origin">搜索地点</button><button type="button" class="button light" id="use-current-location">${icon('pin')} 使用当前位置</button></div><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">搜索地点，或在你同意后使用设备当前位置。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" class="origin-selected" role="status">${m.origin ? `已选择：${esc(m.origin.name)} · ${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择出发地"}</p>
-      <div class="form-grid"><label class="requirement-field" data-requirement-field="mode"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>交通方式</span><select name="mode">${['公共交通', '驾车', '步行', '骑行'].map(mode => `<option ${m.mode === mode ? 'selected' : ''}>${mode}</option>`).join('')}</select><small class="field-error" role="alert"></small></label><label class="requirement-field" data-requirement-field="preference"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>活动偏好</span><select name="preference">${preferenceOptions.map(p => `<option ${selectedPreference === p ? 'selected' : ''}>${p}</option>`).join('')}</select><small class="field-error" role="alert"></small></label></div>
-      <label class="requirement-field" data-requirement-field="preferenceDetail" ${selectedPreference === '其他' ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="请填写具体偏好（20 个字以内）"><small class="field-error" role="alert"></small></label>
+      <fieldset class="requirement-field requirement-choice-field" data-requirement-field="mode"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>交通方式 <small>可多选，推荐时采用耗时最短路线</small></legend><div class="multi-choice-grid">${M.MODES.map(mode => choice('modes', mode, selectedModes.includes(mode))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
+      <fieldset class="requirement-field requirement-choice-field" data-requirement-field="preference"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>活动偏好 <small>可多选；“不限”不能和其他选项同时选择</small></legend><div class="multi-choice-grid preference-choice-grid">${preferenceOptions.map(preference => choice('preferences', preference, selectedPreferences.includes(preference))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
+      <label class="requirement-field" data-requirement-field="preferenceDetail" ${selectedPreferences.includes('其他') ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="请填写具体偏好（20 个字以内）"><small class="field-error" role="alert"></small></label>
       <label class="requirement-field" data-requirement-field="budget"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>人均预算上限（元）</span><input name="budget" type="number" min="0" max="5000" value="${m.budget}" required><small class="field-error" role="alert"></small></label>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
@@ -842,14 +892,15 @@
     }finally{button.disabled=false;button.innerHTML=icon('pin')+' 使用当前位置';}
   });
   function requirementErrors(form) {
-    const preference = form.elements.preference.value;
+    const modes = [...form.querySelectorAll('input[name="modes"]:checked')].map(input => input.value);
+    const preferences = [...form.querySelectorAll('input[name="preferences"]:checked')].map(input => input.value);
     const detail = form.elements.preferenceDetail.value.trim();
     const budget = form.elements.budget.value.trim();
     return {
       origin: selectedOrigin ? '' : '请选择并确认出发地',
-      mode: ['公共交通', '驾车', '步行', '骑行'].includes(form.elements.mode.value) ? '' : '请选择交通方式',
-      preference: M.OPTIONS[active().type].includes(preference) ? '' : '请选择活动偏好',
-      preferenceDetail: preference !== '其他' || (detail && detail.length <= 20) ? '' : '请填写 1—20 个字的其他偏好',
+      mode: modes.length > 0 && modes.every(mode => M.MODES.includes(mode)) ? '' : '请至少选择一种交通方式',
+      preference: preferences.length > 0 && preferences.every(preference => M.OPTIONS[active().type].includes(preference)) && (!preferences.includes('不限') || preferences.length === 1) ? '' : '请选择活动偏好；“不限”不能和其他选项同时选择',
+      preferenceDetail: !preferences.includes('其他') || (detail && detail.length <= 20) ? '' : '请填写 1—20 个字的其他偏好',
       budget: budget !== '' && Number.isFinite(Number(budget)) && Number(budget) >= 0 && Number(budget) <= 5000 ? '' : '预算应在 0—5000 元之间'
     };
   }
@@ -858,8 +909,8 @@
     if (!field) return;
     field.classList.toggle('field-invalid', !!message);
     field.querySelector('.field-error').textContent = message;
-    const control = field.querySelector('input,select');
-    if (message) control?.setAttribute('aria-invalid', 'true'); else control?.removeAttribute('aria-invalid');
+    const controls = field.querySelectorAll('input,select');
+    controls.forEach(control => message ? control.setAttribute('aria-invalid', 'true') : control.removeAttribute('aria-invalid'));
     if (message && animate) {
       field.classList.remove('field-attention');
       void field.offsetWidth;
@@ -889,9 +940,13 @@
   document.addEventListener('change', event => {
     const form = event.target.closest('#requirements-form');
     if (!form) return;
-    if (event.target.name === 'preference') {
+    if (event.target.name === 'preferences') {
+      if (event.target.value === '不限' && event.target.checked)
+        form.querySelectorAll('input[name="preferences"]:not([value="不限"])').forEach(input => { input.checked = false; });
+      const unlimited = form.querySelector('input[name="preferences"][value="不限"]');
+      if (event.target.value !== '不限' && event.target.checked && unlimited) unlimited.checked = false;
       const custom = form.querySelector('[data-requirement-field="preferenceDetail"]');
-      custom.hidden = event.target.value !== '其他';
+      custom.hidden = !form.querySelector('input[name="preferences"][value="其他"]')?.checked;
       if (custom.hidden) custom.querySelector('input').value = '';
     }
     if (form.dataset.validationActive === 'true') validateRequirements(form);
@@ -902,10 +957,12 @@
     return profile?.name === '游客' ? '' : profile?.name || '';
   };
   function create(date = M.dateKey()) {
+    if (!accountAuth) return openAccount('login');
     if (!M.validDate(date)) date = M.dateKey();
     openModal('发起一次见面', `<p class="modal-intro">先确定时间和活动类型，创建后把邀请链接发给伙伴。</p><form id="create-form"><label>活动名称<input name="title" maxlength="40" required placeholder="例如：周五晚饭见"></label><div class="form-grid"><label>见面日期<input name="date" type="date" value="${date}" required></label><label>见面时间<input name="time" type="time" value="18:30" required></label></div><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}" placeholder="伙伴会看到这个名字"></label><label>这次想做什么<select name="type">${Object.keys(M.OPTIONS).map(t => `<option>${t}</option>`).join('')}</select></label>${identityOptions()}<div class="subtle-box">支持 2—10 人。创建后，大家分别填写出发地和偏好，再一起查看推荐、完成投票。</div><button type="submit" class="button primary full">创建并邀请伙伴 ${icon('arrow')}</button></form>`);
   }
   function join(code = '') {
+    if (!accountAuth) return openAccount('login');
     openModal('加入伙伴的活动', `<p class="modal-intro">输入伙伴发来的 6 位邀请码。加入后，先填写你的出行需求。</p><form id="join-form"><label>6 位邀请码<input name="code" required maxlength="6" inputmode="text" autocomplete="one-time-code" value="${esc(code)}" placeholder="例如：MP2026"></label><label>你的昵称<input name="nickname" maxlength="16" required value="${esc(defaultNickname())}" placeholder="让伙伴知道你是谁"></label>${identityOptions()}<button class="button primary full" type="submit">加入并填写需求 ${icon('arrow')}</button></form>`);
   }
   function invite() {
@@ -919,7 +976,7 @@
     const a=active();
     return '<div class="detail-score"><span>综合参考分</span><strong>'+p.score.toFixed(1)+'</strong><p>有效维度等权平均；预算无可靠消费数据时不扣分。</p></div>'+
     '<div>'+Object.entries(p.dimensions).map(([key,value])=>'<p>'+esc(({fairness:'公平性',time:'整体耗时',preference:'偏好匹配',convenience:'便利性'})[key]||key)+'：'+formatScore(value)+'</p>').join('')+'</div>'+
-    '<p>'+esc((p.reasons||[]).join('；'))+'</p><table><tr><th>成员</th><th>时间</th><th>费用</th></tr>'+p.routes.map(r=>'<tr><td>'+esc(a.members.find(m=>m.id===r.memberId)?.name||'成员')+'</td><td>'+r.minutes+' 分钟</td><td>'+(r.costStatus==='known'?esc(String(r.cost))+' 元':r.costStatus==='not_applicable'?'不适用':'未知')+'</td></tr>').join('')+'</table><p>仅显示本人和公开位置成员的路线；地图费用为预计费用，驾车油费和停车费未知。</p>';
+    '<p>'+esc((p.reasons||[]).join('；'))+'</p><table><tr><th>成员</th><th>交通方式</th><th>时间</th><th>费用</th></tr>'+p.routes.map(r=>'<tr><td>'+esc(a.members.find(m=>m.id===r.memberId)?.name||'成员')+'</td><td>'+esc(r.mode||'未知')+'</td><td>'+r.minutes+' 分钟</td><td>'+(r.costStatus==='known'?esc(String(r.cost))+' 元':r.costStatus==='not_applicable'?'不适用':'未知')+'</td></tr>').join('')+'</table><p>仅显示本人和公开位置成员的路线；多选交通方式时采用耗时最短的有效路线。地图费用为预计费用，驾车油费和停车费未知。</p>';
   }
   function details(id) {
     const p = active().candidates.find(p => p.id === id);
@@ -938,7 +995,8 @@
   function navigate() {
     const a = active(), p = a.candidates.find(p => p.id === selectedPoi) || a.candidates.find(p => p.id === a.winningCandidateId), m = self();
     if (!p || !m?.origin) return toast('请先选择候选地点并填写出发地');
-    const url = M.navigationUrl(m.origin, p, m.mode);
+    const mode = p.routes?.find(route => route.memberId === m.id)?.mode || M.memberModes(m)[0];
+    const url = M.navigationUrl(m.origin, p, mode);
     const popup = window.open(url, '_blank');
     if (popup) popup.opener = null;
     else openModal('浏览器阻止了新窗口', `<p class="modal-intro">请点击下面的按钮，在高德地图中继续查看从「${esc(m.origin.name)}」到「${esc(p.name)}」的路线。</p><a class="button primary full" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${icon('navigation')} 在高德地图中打开路线</a>`);
@@ -948,6 +1006,7 @@
     return `<details class="identity-choices"><summary>切换本机身份</summary><div><button class="button light" data-action="switch-profile" data-value="examples" ${profiles.activeId === 'examples' ? 'disabled aria-current="true"' : ''}>本机示例</button>${guests.map(item => `<button class="button light" data-action="switch-profile" data-value="${esc(item.id)}" ${profiles.activeId === item.id ? 'disabled aria-current="true"' : ''}>${esc(item.name)}${guests.filter(guest => guest.name === item.name).length > 1 ? ` · ${esc(item.id.slice(-4))}` : ''}</button>`).join('')}</div><p class="panel-tip">同名身份用末尾四位区分，切换不会合并活动。</p></details>`;
   }
   const actions = {
+    browse: async () => { await selectProfile('examples'); appSurface = 'workspace'; view = 'overview'; render(); },
     view: value => { view = value; selectedPoi = null; menuOpen = false; render(); },
     'landing-home': () => { appSurface = 'landing'; menuOpen = false; closeModal(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); },
     'landing-section': value => {
@@ -1042,21 +1101,28 @@
     'cancel-confirm': () => confirmAction('确定取消活动？', '取消后无法恢复本次活动，但会保留活动记录。', 'cancel', '确认取消'),
     cancel: async () => { if (await run('cancel', {}, '活动已取消')) closeModal(); },
     remove: async value => { if (await run('remove', { id: value }, '成员已移除')) manage(); },
-    leave: () => confirmAction('退出这场活动？', isShared(active()) ? '退出后将失去这场共享活动的成员访问权限。' : '退出后，演示界面将切换为发起者视角。', 'leave-confirm', '确认退出'),
+    leave: () => {
+      const a = active();
+      if (terminal(a)) return openModal('当前不能退出活动', `<p class="modal-intro">${a.status === 'cancelled' ? '这场活动已取消，记录会继续保留。' : '这场活动已经结束，成员记录会保留在相聚日历中。'}</p><div class="modal-actions"><button class="button light" data-action="close-modal">知道了</button></div>`);
+      if (a.paused) return openModal('当前不能退出活动', '<p class="modal-intro">活动已暂停，请等待发起者恢复后再退出。</p><div class="modal-actions"><button class="button light" data-action="close-modal">知道了</button></div>');
+      if (a.status === 'voting') return openModal('当前不能退出活动', '<p class="modal-intro">本轮投票期间成员名单已锁定。请等待投票结束后再退出。</p><div class="modal-actions"><button class="button light" data-action="close-modal">知道了</button></div>');
+      if (isHost()) return openModal('请先移交发起权限', '<p class="modal-intro">发起者不能直接退出活动。请先在活动管理中把发起权限移交给其他成员，再回来退出。</p><div class="modal-actions"><button class="button light" data-action="close-modal">暂不退出</button><button class="button primary" data-action="manage">前往管理活动</button></div>');
+      confirmAction('退出这场活动？', isShared(a) ? '退出后将失去这场共享活动的成员访问权限。' : '退出后，演示界面将切换为发起者视角。', 'leave-confirm', '确认退出');
+    },
     'leave-confirm': async () => { if (await run('leave', {}, '已退出活动')) closeModal(); },
-    'open-activity': async value => { if (!visibleActivities().some(a => a.id === value)) return; state.activeId = value; if (isShared(active())) await refreshShared(value, false); else state.identities[value] ||= active().hostId; if (currentProfile()) currentProfile().lastActivityId = value; selectedPoi = null; view = 'recommend'; saveProfiles(); save(); render(); },
-    sample: () => { const a = M.seed(); state.activities.unshift(a); state.activeId = a.id; state.identities[a.id] = a.hostId; selectedPoi = null; view = 'recommend'; save(); render(); toast('已创建新的示例活动'); },
+    'open-activity': async value => { if (!visibleActivities().some(a => a.id === value)) return; state.activeId = value; if (isShared(active())) await refreshShared(value, false); else state.identities[value] ||= active().hostId; if (currentProfile()) currentProfile().lastActivityId = value; selectedPoi = null; view = M.activityDetailView(active()); saveProfiles(); save(); render(); },
+    sample: () => { const a = M.seed(); state.activities.unshift(a); state.activeId = a.id; state.identities[a.id] = a.hostId; selectedPoi = null; view = M.activityDetailView(a); save(); render(); toast('已创建新的示例活动'); },
     copy: async () => {
       const url = new URL(location.href); url.hash = ''; url.search = ''; url.searchParams.set('invite', active().code);
       try { await navigator.clipboard.writeText(url.href); toast(isShared(active()) ? '邀请链接已复制，可发送给其他设备' : '本机示例链接已复制，仅当前浏览器可用'); }
       catch { openModal('复制邀请链接', `<p class="modal-intro">请手动复制下方链接。${isShared(active()) ? '其他设备可通过链接加入。' : '本机示例仅当前浏览器可用。'}</p><label>邀请链接<input readonly value="${esc(url.href)}" onclick="this.select()"></label>`); }
     },
-    about: () => openModal('关于这本相聚手账', '<p class="modal-intro">根据 7-eleven engineering 的 MeetPoint SRS V1.1 实现的演示。</p><ul class="about-list"><li>新建活动可跨设备完成邀请、需求、三组 Top3 推荐、申请审批、多轮投票与手账记录。</li><li>共享活动由服务器和 SQLite 保存；游客可在 24 小时内恢复未完成活动，登录账号可在 7 天内恢复。</li><li>旧示例活动只保存在当前浏览器。登录后的示例手账为独立只读内容，不计入个人活动。</li><li>反馈表单仍为本机演示数据；管理员流程尚未接入共享服务。</li><li>共享活动的地点、路线与静态地图来自高德；本机示例仍使用演示数据。</li><li>演示环境将登录令牌保存在本浏览器；正式部署还需要 HTTPS、访问频率限制和数据库备份。</li></ul>')
+    about: () => openModal('关于这本相聚手账', '<p class="modal-intro">根据 7-eleven engineering 的 MeetPoint SRS V1.1 实现的演示。</p><ul class="about-list"><li>新建活动可跨设备完成邀请、需求、三组 Top3 推荐、申请审批、多轮投票与手账记录。</li><li>共享活动由服务器和 SQLite 保存；游客仅可查看，创建、加入及操作活动需要注册或登录。</li><li>旧示例活动只保存在当前浏览器。登录后的示例手账为独立只读内容，不计入个人活动。</li><li>反馈表单仍为本机演示数据；管理员流程尚未接入共享服务。</li><li>共享活动的地点、路线与静态地图来自高德；本机示例仍使用演示数据。</li><li>演示环境将登录令牌保存在本浏览器；正式部署还需要 HTTPS、访问频率限制和数据库备份。</li></ul>')
   };
   function activate(id, nextView = 'calendar') {
     state.activeId = id; state.identities[id] ||= active().hostId; selectedPoi = null; view = nextView; save();
   }
-  const journal = window.createMeetPointJournal({ M, esc, icon, avatar, getState: () => state, visibleActivities, active, viewer, activate, replace, perform, isShared, uploadSharedPhoto, sharedPhotoUrl, forgetSharedPhoto, save, render, openModal, toast, create, statusText });
+  const journal = window.createMeetPointJournal({ M, esc, icon, avatar, getState: () => state, visibleActivities, active, viewer, activate, replace, perform, isShared, uploadSharedPhoto, sharedPhotoUrl, forgetSharedPhoto, save, render, openModal, toast, create, statusText, canWrite: () => !!accountAuth });
   Object.assign(actions, journal.actions);
   document.addEventListener('click', async event => {
     const button = event.target.closest('[data-action]');
@@ -1064,6 +1130,8 @@
     if (menuOpen && !event.target.closest('.site-header')) { menuOpen = false; $('#primary-nav')?.classList.remove('is-open'); $('[data-action="toggle-menu"]')?.setAttribute('aria-expanded', 'false'); }
     if (!button || button.disabled) return;
     event.preventDefault();
+    const readActions = new Set(['view','landing-home','landing-workspace','landing-demo','landing-guide','account-login','account-register','close-modal','open-activity','open-journal','photo-open','select-poi','close-poi','recommend-group','retry-static-map','toggle-menu','identity-info','switch-profile','sample-journal','month-prev','month-next','month-today','calendar-date','journal-planning','landing-section','browse','about']);
+    if (!accountAuth && !readActions.has(button.dataset.action)) { openAccount('login'); return; }
     try { await actions[button.dataset.action]?.(button.dataset.value); } catch (error) { toast(error.message); }
   });
   document.addEventListener('keydown', event => {
@@ -1089,6 +1157,7 @@
   document.addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.target;
+    if (!accountAuth && !['account-login-form', 'account-register-form'].includes(form.id)) { openAccount('login'); return; }
     if (await journal.submit(form)) return;
     const data = new FormData(form);
     try {
@@ -1104,13 +1173,13 @@
         const a = acceptShared(result);
         journal.setDate(a.date);
         state.activeId = a.id;
-        selectedPoi = null; view = 'recommend'; save(); closeModal(); render(); invite();
+        selectedPoi = null; view = M.activityDetailView(a); save(); closeModal(); render(); invite();
       } else if (form.getAttribute('id') === 'join-form') {
         const result = await api('/api/activities/join', 'POST', { code: data.get('code'), nickname: data.get('nickname') }, isAccount() ? accountAuth.token : null);
         attachToProfile(result.activity, result.token);
         const a = acceptShared(result);
         state.activeId = a.id;
-        selectedPoi = null; view = 'recommend'; save();
+        selectedPoi = null; view = M.activityDetailView(a); save();
         const url = new URL(location.href);
         url.searchParams.delete('invite');
         history.replaceState(null, '', url);
@@ -1118,7 +1187,7 @@
       } else if (form.getAttribute('id') === 'requirements-form') {
         form.dataset.validationActive = 'true';
         if (!validateRequirements(form, true)) return;
-        if (await run('requirements', { origin: selectedOrigin, mode: data.get('mode'), preference: data.get('preference'), preferenceDetail: data.get('preferenceDetail'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+        if (await run('requirements', { origin: selectedOrigin, modes: data.getAll('modes'), preferences: data.getAll('preferences'), preferenceDetail: data.get('preferenceDetail'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
       } else if (form.getAttribute('id') === 'rename-form') {
         if (await run('rename', { name: data.get('name') }, '昵称已更新')) {
           sessionFor(active().id).name = self().name;
@@ -1196,7 +1265,8 @@
         }
         const message = form.querySelector('.auth-error');
         if (message) message.textContent = error.message;
-      } else toast(error.message);
+      } else if (form.getAttribute('id') === 'join-form' && error.code === 'ACTIVITY_FULL') showPageAlert(error.message);
+      else toast(error.message);
     }
   });
   $('#modal').addEventListener('click', event => { if (event.target === $('#modal')) { const r = $('#modal').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeModal(); } });
@@ -1293,7 +1363,7 @@
     if (target) {
       state.activeId = target.id;
       selectedPoi = null;
-      view = 'recommend';
+      view = M.activityDetailView(target);
       save();
       saveProfiles();
     } else if (profiles.activeId !== 'examples') {

@@ -14,6 +14,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
   const db = new DatabaseSync(filename);
   db.exec(`PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = 2000;
     CREATE TABLE IF NOT EXISTS activities (
       id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
     );
@@ -56,11 +57,6 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     try { const result = operation(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   };
-  const makeToken = (a, memberId) => {
-    const token = randomBytes(32).toString('base64url');
-    addSession.run(digest(token), a.id, memberId);
-    return token;
-  };
   const accountFor = token => {
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '请先登录账号');
     const session = findAccountSession.get(digest(token));
@@ -79,13 +75,19 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       fail(400, '账号应为 3—30 位文字、数字或下划线，密码应为 8—128 位');
     return { username, password };
   };
-  const project = (a, viewerId) => ({
-    ...M.migrate(a), viewerId, requirementsReady: M.ready(a),
-    candidates: a.candidates.map(p=>({...p,routes:p.routes.filter(r=>r.memberId===viewerId||a.members.find(m=>m.id===r.memberId)?.shared)})),
-    members: M.visibleMembers(a, viewerId).map(m => ({
-      ...m, ready: !!a.members.find(member => member.id === m.id)?.origin
-    }))
-  });
+  const project = (a, viewerId) => {
+    const activity = M.migrate(a);
+    const voteStatus = M.voteStatus(activity, viewerId);
+    const visibleRoutes = new Set(a.members.filter(m => m.shared || m.id === viewerId).map(m => m.id));
+    return {
+      ...activity, viewerId, requirementsReady: M.ready(a), voteStatus,
+      votes: voteStatus.myVote ? { [viewerId]: voteStatus.myVote } : {},
+      candidates: activity.candidates.map(p => ({ ...p, routes: (p.routes || []).filter(r => visibleRoutes.has(r.memberId)) })),
+      members: M.visibleMembers(a, viewerId).map((m, i) => ({
+        ...m, ready: !!a.members[i].origin, originReady: !!a.members[i].origin
+      }))
+    };
+  };
   const authenticate = (id, token) => {
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '请先以活动成员身份加入');
     const row = findSession.get(digest(token), id);
@@ -95,8 +97,9 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     if (!memberId) fail(403, '该账号尚未加入此活动');
     const stored = findById.get(id);
     if (!stored) fail(404, '活动不存在');
-    const activity = M.tick(M.migrate(JSON.parse(stored.payload)));
-    if (activity.status !== JSON.parse(stored.payload).status) update.run(JSON.stringify(activity), id);
+    const before = JSON.parse(stored.payload);
+    const activity = M.tick(before);
+    if (activity.status !== before.status) update.run(JSON.stringify(activity), id);
     if (!M.access(activity, memberId).allowed) {
       if (row) db.prepare('DELETE FROM sessions WHERE token_hash = ? AND activity_id = ?').run(digest(token), id);
       fail(403, '该身份的活动恢复期限已过');
@@ -104,11 +107,24 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     return { activity, memberId };
   };
 
+  const due = db.prepare(`SELECT payload FROM activities
+    WHERE json_extract(payload, '$.status') = 'voting'
+      AND json_extract(payload, '$.paused') = 0
+      AND json_extract(payload, '$.deadline') <= ?`);
   return {
+    settleExpiredRounds(now = Date.now()) {
+      if (!due.get(now)) return;
+      return withWrite(() => {
+        for (const row of due.all(now)) {
+          const activity = M.tick(JSON.parse(row.payload), now);
+          update.run(JSON.stringify(activity), activity.id);
+        }
+      });
+    },
     pruneExpiredGuests() {
       const remove = db.prepare('DELETE FROM sessions WHERE token_hash = ?');
       for (const row of guestSessions.all()) {
-        const activity = M.migrate(JSON.parse(row.payload));
+        const activity = M.tick(JSON.parse(row.payload));
         if (!M.access(activity, row.member_id).allowed) remove.run(row.token_hash);
       }
     },
@@ -140,7 +156,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     listAccountActivities(token) {
       const id = accountFor(token);
       return { activities: accountActivities.all(id).flatMap(row => {
-        const activity = M.migrate(JSON.parse(row.payload));
+        const activity = M.tick(JSON.parse(row.payload));
         return M.access(activity, row.member_id).allowed ? [project(activity, row.member_id)] : [];
       }) };
     },
@@ -160,73 +176,96 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     create(input, accountToken) {
+      const accountId = accountFor(accountToken);
       if (typeof input.title !== 'string' || typeof input.nickname !== 'string' ||
           input.title.length > 40 || input.nickname.length > 16) fail(400, '请填写有效的活动名称和昵称');
       return withWrite(() => {
-        const accountId = accountToken ? accountFor(accountToken) : null;
-        const a = M.createActivity(input.title, input.nickname, input.type, Date.now(), { date: input.date, time: input.time, identityType: accountId ? 'account' : 'guest' });
+        const a = M.createActivity(input.title, input.nickname, input.type, Date.now(), { date: input.date, time: input.time, identityType: 'account' });
         // Retrying a rare code collision must not overwrite another invitation.
         while (findByCode.get(a.code)) a.code = randomBytes(3).toString('hex').toUpperCase();
         insert.run(a.id, a.code, JSON.stringify(a));
-        if (accountId) db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, a.hostId);
-        return { activity: project(a, a.hostId), token: accountId ? null : makeToken(a, a.hostId) };
+        db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, a.hostId);
+        return { activity: project(a, a.hostId), token: null };
       });
     },
     join(input, accountToken) {
+      const accountId = accountFor(accountToken);
       const code = typeof input.code === 'string' ? input.code.trim().toUpperCase() : '';
       if (!codePattern.test(code) || typeof input.nickname !== 'string' || input.nickname.length > 16) fail(400, '请填写有效的邀请码和昵称');
       return withWrite(() => {
         const stored = findByCode.get(code);
         if (!stored) fail(404, '邀请码不存在');
-        const accountId = accountToken ? accountFor(accountToken) : null;
-        if (accountId && findAccountMember.get(accountId, JSON.parse(stored.payload).id)) fail(409, '该账号已经参与此活动');
-        const a = M.act(JSON.parse(stored.payload), null, 'join', { name: input.nickname, identityType: accountId ? 'account' : 'guest' });
+        if (findAccountMember.get(accountId, JSON.parse(stored.payload).id)) fail(409, '该账号已经参与此活动');
+        const a = M.act(JSON.parse(stored.payload), null, 'join', { name: input.nickname, identityType: 'account' });
         update.run(JSON.stringify(a), a.id);
         const memberId = a.members.at(-1).id;
-        if (accountId) db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, memberId);
-        return { activity: project(a, memberId), token: accountId ? null : makeToken(a, memberId) };
+        db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, memberId);
+        return { activity: project(a, memberId), token: null };
       });
     },
     get(id, token) {
-      const { activity, memberId } = authenticate(id, token);
-      return { activity: project(activity, memberId) };
-    },
-    requirements(id, token, input) {
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
+        return { activity: project(activity, memberId) };
+      });
+    },
+    history(id, token) {
+      return withWrite(() => {
+        const { activity } = authenticate(id, token);
+        return { items: activity.roundHistory };
+      });
+    },
+    requirements(id, token, input) {
+      accountFor(token);
+      return withWrite(() => {
+        const { activity, memberId } = authenticate(id, token);
+        const origin = input?.origin;
+        if (!origin || origin.provider !== 'amap' || typeof origin.placeId !== 'string' || !origin.placeId.trim() ||
+            typeof origin.name !== 'string' || !origin.name.trim() || !require('./recommendation').valid(origin))
+          fail(400, '请从高德搜索结果或当前位置中确认出发地');
         const a = M.act(activity, memberId, 'requirements', {
-          origin: input.origin, mode: input.mode,
-          preference: input.preference, budget: input.budget, shared: input.shared === true
+          origin: input.origin, modes: input.modes, mode: input.mode,
+          preferences: input.preferences, preference: input.preference, preferenceDetail: input.preferenceDetail,
+          budget: input.budget, shared: input.shared === true
         });
         update.run(JSON.stringify(a), id);
         return { activity: project(a, memberId) };
       });
     },
-    async recommendLive(id, token, provider) {
+    async recommendLive(id, token, provider, input = { action: 'recommend' }) {
+      accountFor(token);
       const {activity,memberId}=authenticate(id,token);
       if(memberId!==activity.hostId) fail(403,'只有发起者可以推荐');
       if(activity.paused||['completed','cancelled'].includes(activity.status)) fail(409,'当前活动不能推荐');
       if(!M.ready(activity)) fail(400,'请所有成员先填写完整需求');
+      M.act(activity, memberId, input.action, input.data || {});
       const version=JSON.stringify(activity);
-      const signal=AbortSignal.timeout(30000);
+      const signal=AbortSignal.timeout(300000);
       const bounded={search:(...args)=>provider.search(args[0],args[1],undefined,signal),route:(...args)=>provider.route(...args,signal)};
       const result=await require('./recommendation').recommend(activity,bounded);
       return withWrite(()=>{
         const current=authenticate(id,token);
         if(JSON.stringify(current.activity)!==version) fail(409,'活动已更新，请重新推荐');
-        const a=M.act(current.activity,memberId,'recommend',{recommendation:result});
+        const a=M.act(current.activity,memberId,input.action,{...input.data,recommendation:result});
         update.run(JSON.stringify(a),id);
         return {activity:project(a,memberId)};
       });
     },
-    authorizeLocation(id,token){authenticate(id,token);},
+    authorizeLocation(token) { accountFor(token); },
     act(id, token, input) {
-      const allowed = new Set(['requirements', 'recommend', 'request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
+      accountFor(token);
+      const allowed = new Set(['requirements', 'recommend', 'request', 'review-request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
       if (!input || !allowed.has(input.action)) fail(400, '不支持该操作');
+      const data = input.data ?? {};
+      if (typeof data !== 'object' || Array.isArray(data)) fail(400, '操作数据格式无效');
+      if (['vote', 'request', 'finish', 'revote'].includes(input.action) &&
+          (!Number.isSafeInteger(data.round) || data.round < 1)) fail(400, '请提交有效轮次');
+      if (input.action === 'vote' && (typeof data.candidateId !== 'string' || !data.candidateId))
+        fail(400, '请提交候选地点 ID');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
         if(input.action==='recommend'||input.data?.recommendation) fail(400,'推荐数据只能由服务端生成');
-        const a = M.act(activity, memberId, input.action, input.data || {});
+        const a = M.act(activity, memberId, input.action, data);
         update.run(JSON.stringify(a), id);
         if (input.action === 'leave' || input.action === 'remove') {
           const departed = input.action === 'leave' ? memberId : input.data.id;
@@ -238,6 +277,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     uploadPhoto(id, token, input) {
+      accountFor(token);
       if (!input || typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/.test(input.id) ||
           typeof input.name !== 'string' || input.name.length > 100 ||
           !['image/jpeg', 'image/png', 'image/webp'].includes(input.mime) ||
@@ -245,6 +285,12 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
           !/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64)) fail(400, '照片格式无效');
       const bytes = Buffer.from(input.base64, 'base64');
       if (!bytes.length || bytes.length > 8 * 1024 * 1024) fail(400, '照片不能超过 8 MB');
+      const signatures = {
+        'image/png': bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])),
+        'image/jpeg': bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
+        'image/webp': bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+      };
+      if (!signatures[input.mime]) fail(400, '照片内容与文件类型不一致');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
         const a = M.act(activity, memberId, 'photos', { photos: [{ id: input.id, name: input.name }] });
@@ -259,6 +305,46 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       const row = findPhoto.get(photoId, id);
       if (!row) fail(404, '照片文件不存在');
       return row;
+    },
+    replaceDemoAccount(input) {
+      const { username, password } = accountInput(input);
+      const marker = typeof input?.marker === 'string' ? input.marker : '';
+      const entries = Array.isArray(input?.entries) ? input.entries : [];
+      if (!marker || !entries.length) fail(400, '演示数据无效');
+      return withWrite(() => {
+        const existing = findAccount.get(username);
+        if (existing) {
+          const rows = db.prepare(`SELECT a.id, a.payload FROM account_memberships m
+            JOIN activities a ON a.id = m.activity_id WHERE m.account_id = ?`).all(existing.id);
+          if (!rows.length || rows.some(row => JSON.parse(row.payload).demoSeed !== marker))
+            fail(409, '同名账号不是可替换的演示账号，已停止写入');
+          for (const row of rows) {
+            db.prepare('DELETE FROM photos WHERE activity_id = ?').run(row.id);
+            db.prepare('DELETE FROM sessions WHERE activity_id = ?').run(row.id);
+            db.prepare('DELETE FROM account_memberships WHERE activity_id = ?').run(row.id);
+            db.prepare('DELETE FROM activities WHERE id = ?').run(row.id);
+          }
+          db.prepare('DELETE FROM account_sessions WHERE account_id = ?').run(existing.id);
+          db.prepare('DELETE FROM accounts WHERE id = ?').run(existing.id);
+        }
+
+        const accountId = randomUUID(), salt = randomBytes(16).toString('hex');
+        db.prepare('INSERT INTO accounts VALUES (?, ?, ?, ?)').run(
+          accountId, username, salt, scryptSync(password, salt, 64).toString('hex')
+        );
+        const codes = new Set();
+        for (const entry of entries) {
+          const activity = M.migrate(entry?.activity);
+          if (activity.demoSeed !== marker || !activity.members.some(member => member.id === entry.viewerId))
+            fail(400, '演示活动身份无效');
+          while (codes.has(activity.code) || findByCode.get(activity.code))
+            activity.code = randomBytes(3).toString('hex').toUpperCase();
+          codes.add(activity.code);
+          insert.run(activity.id, activity.code, JSON.stringify(activity));
+          db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, activity.id, entry.viewerId);
+        }
+        return { username, activities: entries.length };
+      });
     },
     close() { db.close(); }
   };
