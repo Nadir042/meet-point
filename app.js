@@ -398,11 +398,10 @@
       ${a.status === 'cancelled' ? '<div class="notice">这场活动已取消。你仍可查看记录，或创建一场新的相聚。</div>' : ''}`;
   }
   function mapPoints() {
-    const a = active();
-    const ids = [...(a.groups[group] || [])];
-    if (a.winningCandidateId && !ids.includes(a.winningCandidateId)) ids.push(a.winningCandidateId);
-    return ids.map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
-  }
+  const a = active();
+  const ids = [...new Set(a.groups[group] || [])].slice(0, 3);
+  return ids.map(id => a.candidates.find(p => p.id === id)).filter(Boolean);
+}
   function staticMapKey() {
     const a = active();
     return [a.id, a.round, group, a.winningCandidateId || '', ...mapPoints().map(point => `${point.id}:${point.lng}:${point.lat}`)].join('|');
