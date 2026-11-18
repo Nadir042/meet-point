@@ -69,7 +69,7 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         const points = ids.map(id => activity.candidates.find(candidate => candidate.id === id)).filter(candidate => candidate && Number.isFinite(candidate.lng) && Number.isFinite(candidate.lat));
         if (!points.length) { const error = new Error('暂无可展示的候选地点'); error.status = 404; throw error; }
         if (typeof mapProvider.staticMap !== 'function') { const error = new Error('地图图片服务尚未配置'); error.status = 503; throw error; }
-        const cacheKey = JSON.stringify(['static-map-v3', ...points.map(point => [point.id, point.lng, point.lat])]);
+        const cacheKey = JSON.stringify(['static-map-v4', ...points.map(point => [point.id, point.lng, point.lat])]);
         let entry = staticMapCache.get(cacheKey);
         if (!entry || entry.expiresAt <= Date.now()) {
           const request = mapProvider.staticMap(points.map((point, index) => ({...point,label:String(index + 1)})));
