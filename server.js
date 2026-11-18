@@ -66,7 +66,6 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         if (!['fairness', 'preference', 'convenience'].includes(group)) { const error = new Error('推荐分组无效'); error.status = 400; throw error; }
         const activity = store.get(staticMap[1], token).activity;
         let ids = [...(activity.groups[group] || [])].slice(0, 3);
-        if (activity.winningCandidateId && !ids.includes(activity.winningCandidateId)) ids = [activity.winningCandidateId, ...ids].slice(0, 3);
         const points = ids.map(id => activity.candidates.find(candidate => candidate.id === id)).filter(candidate => candidate && Number.isFinite(candidate.lng) && Number.isFinite(candidate.lat));
         if (!points.length) { const error = new Error('暂无可展示的候选地点'); error.status = 404; throw error; }
         if (typeof mapProvider.staticMap !== 'function') { const error = new Error('地图图片服务尚未配置'); error.status = 503; throw error; }
