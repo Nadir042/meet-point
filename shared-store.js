@@ -171,6 +171,35 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       requireAdmin(token);
       return accountStatus(targetAccount(username));
     },
+    reviewAccountActivities(token, username) {
+      requireAdmin(token);
+      const target = targetAccount(username);
+      return { activities: accountActivities.all(target.id).map(row => {
+        const activity = M.tick(JSON.parse(row.payload));
+        const { id, title, date, time, type, status, paused, journal } = activity;
+        const member = activity.members.find(item => item.id === row.member_id);
+        const byTarget = entry => entry.memberId === row.member_id;
+        return {
+          id, title, date, time, type, status, paused, nickname: member?.name,
+          feelings: journal.feelings.filter(byTarget).map(({ text }) => ({ text })),
+          comments: journal.comments.filter(byTarget).map(({ text }) => ({ text })),
+          photos: journal.photos.filter(byTarget).map(({ id, name }) => ({ id, name }))
+        };
+      }) };
+    },
+    reviewAccountPhoto(token, username, activityId, photoId) {
+      requireAdmin(token);
+      const target = targetAccount(username);
+      const membership = findAccountMember.get(target.id, activityId);
+      const stored = membership && findById.get(activityId);
+      if (!stored) fail(404, '活动不存在');
+      const activity = M.migrate(JSON.parse(stored.payload));
+      if (!activity.journal.photos.some(photo => photo.id === photoId && photo.memberId === membership.member_id))
+        fail(404, '照片不存在');
+      const row = findPhoto.get(photoId, activityId);
+      if (!row) fail(404, '照片文件不存在');
+      return row;
+    },
     logout(token) {
       accountFor(token);
       db.prepare('DELETE FROM account_sessions WHERE token_hash = ?').run(digest(token));

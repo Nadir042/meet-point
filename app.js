@@ -1060,6 +1060,25 @@
     'account-login': () => openAccount('login'),
     'account-register': () => openAccount('register'),
     'admin-accounts': () => showAccountManagement(),
+    'admin-review-photo': async (url, button) => {
+      button.disabled = true;
+      try {
+        const response = await fetch(url, { headers: { Authorization: `Bearer ${accountAuth.token}` } });
+        if (!response.ok) throw new Error('照片暂时无法读取');
+        const photo = await response.blob();
+        if (!button.isConnected || !$('#modal').open) return;
+        const image = document.createElement('img');
+        image.alt = button.textContent.trim();
+        image.style.maxWidth = '100%';
+        const source = URL.createObjectURL(photo);
+        image.onload = image.onerror = () => URL.revokeObjectURL(source);
+        image.src = source;
+        button.replaceWith(image);
+      } catch (error) {
+        button.disabled = false;
+        toast(error.message);
+      }
+    },
     'account-logout': async () => {
       const previous = accountAuth?.previousProfileId;
       try { await api('/api/account/logout', 'POST', {}, accountAuth.token); } catch { /* Local logout still clears this browser. */ }
@@ -1133,7 +1152,7 @@
     event.preventDefault();
     const readActions = new Set(['view','landing-home','landing-workspace','landing-demo','landing-guide','account-login','account-register','close-modal','open-activity','open-journal','photo-open','select-poi','close-poi','recommend-group','retry-static-map','toggle-menu','identity-info','switch-profile','sample-journal','month-prev','month-next','month-today','calendar-date','journal-planning','landing-section','browse','about']);
     if (!accountAuth && !readActions.has(button.dataset.action)) { openAccount('login'); return; }
-    try { await actions[button.dataset.action]?.(button.dataset.value); } catch (error) { toast(error.message); }
+    try { await actions[button.dataset.action]?.(button.dataset.value, button); } catch (error) { toast(error.message); }
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !$('#modal').open) {
@@ -1156,8 +1175,24 @@
     } catch (error) { toast(error.message); }
   });
   function showAccountManagement(target) {
-    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p>` : '';
+    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p><form id="admin-activities-form"><input type="hidden" name="username" value="${esc(target.username)}"><button class="button light" type="submit">查看活动与手账</button></form>` : '';
     openModal('账号管理', `<form id="admin-query-form"><label>完整登录账号名<input name="username" required maxlength="30"></label><button class="button primary" type="submit">查询账号</button></form>${result}`);
+  }
+
+  function showAccountActivities(username, activities) {
+    const activityList = activities.map(activity => {
+      const photos = activity.photos.map(photo => {
+        const url = `/api/admin/account/activities/${activity.id}/photos/${photo.id}?username=${encodeURIComponent(username)}`;
+        return `<li><button class="text-button" data-action="admin-review-photo" data-value="${esc(url)}">查看照片：${esc(photo.name)}</button></li>`;
+      }).join('');
+      const journal = [
+        ...activity.feelings.map(item => `<p><strong>感想</strong> ${esc(item.text)}</p>`),
+        ...activity.comments.map(item => `<p><strong>留言</strong> ${esc(item.text)}</p>`),
+        photos ? `<ul>${photos}</ul>` : ''
+      ].join('');
+      return `<details class="panel"><summary>${esc(activity.title)} · ${esc(statusText(activity) || activity.status)}</summary><p>${esc(activity.date)} ${esc(activity.time)} · ${esc(activity.type)}${activity.nickname ? ` · 昵称 ${esc(activity.nickname)}` : ''}</p>${journal || '<p>该账号在这场活动中暂无手账内容。</p>'}</details>`;
+    }).join('');
+    openModal('活动与手账巡查', `<p>账号 <strong>${esc(username)}</strong> · ${activities.length} 场活动</p>${activityList || '<p>该账号暂无活动记录。</p>'}<button class="button light" data-action="admin-accounts">返回账号管理</button>`, true);
   }
 
   document.addEventListener('submit', async event => {
@@ -1170,6 +1205,12 @@
       if (form.id === 'admin-query-form') {
         showAccountManagement();
         showAccountManagement(await api('/api/admin/account?username=' + encodeURIComponent(data.get('username')), 'GET', undefined, accountAuth.token));
+        return;
+      }
+      if (form.id === 'admin-activities-form') {
+        const username = data.get('username');
+        const result = await api('/api/admin/account/activities?username=' + encodeURIComponent(username), 'GET', undefined, accountAuth.token);
+        if (form.isConnected && $('#modal').open) showAccountActivities(username, result.activities);
         return;
       }
       if (form.getAttribute('id') === 'request-form') {
