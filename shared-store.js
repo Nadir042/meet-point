@@ -32,6 +32,9 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     CREATE TABLE IF NOT EXISTS administrators (
       account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS disabled_accounts (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS account_sessions (
       token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, expires_at INTEGER NOT NULL
     );
@@ -67,6 +70,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     return session.account_id;
   };
   const isAdmin = id => !!db.prepare('SELECT 1 FROM administrators WHERE account_id = ?').get(id);
+  const isDisabled = id => !!db.prepare('SELECT 1 FROM disabled_accounts WHERE account_id = ?').get(id);
   const requireAdmin = token => {
     if (!isAdmin(accountFor(token))) fail(403, '需要系统管理员权限');
   };
@@ -75,7 +79,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     if (!target) fail(404, '未找到该账号');
     return target;
   };
-  const accountStatus = target => ({ username: target.username, disabled: false, admin: isAdmin(target.id) });
+  const accountStatus = target => ({ username: target.username, disabled: isDisabled(target.id), admin: isAdmin(target.id) });
   const issueAccountToken = accountId => {
     const token = randomBytes(32).toString('base64url');
     db.prepare('INSERT INTO account_sessions VALUES (?, ?, ?)').run(digest(token), accountId, Date.now() + 7 * M.DAY);
@@ -154,7 +158,10 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if (!account) fail(401, '账号或密码不正确');
       const supplied = scryptSync(password, account.salt, 64);
       if (!timingSafeEqual(supplied, Buffer.from(account.password_hash, 'hex'))) fail(401, '账号或密码不正确');
-      return { account: { id: account.id, username, admin: isAdmin(account.id) }, token: issueAccountToken(account.id) };
+      return withWrite(() => {
+        if (isDisabled(account.id)) fail(403, '账号已停用');
+        return { account: { id: account.id, username, admin: isAdmin(account.id) }, token: issueAccountToken(account.id) };
+      });
     },
     account(token) {
       const id = accountFor(token);
@@ -164,6 +171,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     grantAdmin(username) {
       return withWrite(() => {
         const target = targetAccount(username);
+        if (isDisabled(target.id)) fail(409, '请先恢复该账号');
         db.prepare('INSERT OR IGNORE INTO administrators VALUES (?)').run(target.id);
       });
     },
@@ -199,6 +207,21 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       const row = findPhoto.get(photoId, activityId);
       if (!row) fail(404, '照片文件不存在');
       return row;
+    },
+    setAccountDisabled(token, username, disabled) {
+      return withWrite(() => {
+        requireAdmin(token);
+        const target = targetAccount(username);
+        if (isAdmin(target.id)) fail(403, '只能管理普通账号');
+        if (typeof disabled !== 'boolean') fail(400, '账号状态无效');
+        if (disabled) {
+          db.prepare('INSERT OR IGNORE INTO disabled_accounts VALUES (?)').run(target.id);
+          db.prepare('DELETE FROM account_sessions WHERE account_id = ?').run(target.id);
+        } else {
+          db.prepare('DELETE FROM disabled_accounts WHERE account_id = ?').run(target.id);
+        }
+        return accountStatus(target);
+      });
     },
     logout(token) {
       accountFor(token);

@@ -1175,7 +1175,7 @@
     } catch (error) { toast(error.message); }
   });
   function showAccountManagement(target) {
-    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p><form id="admin-activities-form"><input type="hidden" name="username" value="${esc(target.username)}"><button class="button light" type="submit">查看活动与手账</button></form>` : '';
+    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p>${target.admin ? '<p>系统管理员账号</p>' : `<form id="admin-status-form"><input type="hidden" name="username" value="${esc(target.username)}"><input type="hidden" name="disabled" value="${!target.disabled}"><button class="button light" type="submit">${target.disabled ? '恢复' : '停用'}此账号</button></form>`}<form id="admin-activities-form"><input type="hidden" name="username" value="${esc(target.username)}"><button class="button light" type="submit">查看活动与手账</button></form>` : '';
     openModal('账号管理', `<form id="admin-query-form"><label>完整登录账号名<input name="username" required maxlength="30"></label><button class="button primary" type="submit">查询账号</button></form>${result}`);
   }
 
@@ -1211,6 +1211,10 @@
         const username = data.get('username');
         const result = await api('/api/admin/account/activities?username=' + encodeURIComponent(username), 'GET', undefined, accountAuth.token);
         if (form.isConnected && $('#modal').open) showAccountActivities(username, result.activities);
+        return;
+      }
+      if (form.id === 'admin-status-form') {
+        showAccountManagement(await api('/api/admin/account', 'PATCH', { username: data.get('username'), disabled: data.get('disabled') === 'true' }, accountAuth.token));
         return;
       }
       if (form.getAttribute('id') === 'request-form') {

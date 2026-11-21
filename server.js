@@ -60,6 +60,10 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
           const username = new URL(req.url, 'http://localhost').searchParams.get('username');
           return sendJson(res, 200, store.lookupAccount(token, username));
         }
+        if (req.method === 'PATCH') {
+          const input = await bodyJson(req);
+          return sendJson(res, 200, store.setAccountDisabled(token, input?.username, input?.disabled));
+        }
       }
       if (name === 'api/account/register' && req.method === 'POST') return sendJson(res, 201, store.register(await bodyJson(req)));
       if (name === 'api/account/login' && req.method === 'POST') return sendJson(res, 200, store.login(await bodyJson(req)));
