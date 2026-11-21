@@ -29,6 +29,9 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS administrators (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS account_sessions (
       token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, expires_at INTEGER NOT NULL
     );
@@ -63,6 +66,16 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     if (!session || session.expires_at <= Date.now()) fail(401, '账号登录已过期，请重新登录');
     return session.account_id;
   };
+  const isAdmin = id => !!db.prepare('SELECT 1 FROM administrators WHERE account_id = ?').get(id);
+  const requireAdmin = token => {
+    if (!isAdmin(accountFor(token))) fail(403, '需要系统管理员权限');
+  };
+  const targetAccount = username => {
+    const target = typeof username === 'string' && findAccount.get(username.trim());
+    if (!target) fail(404, '未找到该账号');
+    return target;
+  };
+  const accountStatus = target => ({ username: target.username, disabled: false, admin: isAdmin(target.id) });
   const issueAccountToken = accountId => {
     const token = randomBytes(32).toString('base64url');
     db.prepare('INSERT INTO account_sessions VALUES (?, ?, ?)').run(digest(token), accountId, Date.now() + 7 * M.DAY);
@@ -141,12 +154,22 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if (!account) fail(401, '账号或密码不正确');
       const supplied = scryptSync(password, account.salt, 64);
       if (!timingSafeEqual(supplied, Buffer.from(account.password_hash, 'hex'))) fail(401, '账号或密码不正确');
-      return { account: { id: account.id, username }, token: issueAccountToken(account.id) };
+      return { account: { id: account.id, username, admin: isAdmin(account.id) }, token: issueAccountToken(account.id) };
     },
     account(token) {
       const id = accountFor(token);
       const row = db.prepare('SELECT id, username FROM accounts WHERE id = ?').get(id);
-      return { account: row };
+      return { account: { ...row, admin: isAdmin(id) } };
+    },
+    grantAdmin(username) {
+      return withWrite(() => {
+        const target = targetAccount(username);
+        db.prepare('INSERT OR IGNORE INTO administrators VALUES (?)').run(target.id);
+      });
+    },
+    lookupAccount(token, username) {
+      requireAdmin(token);
+      return accountStatus(targetAccount(username));
     },
     logout(token) {
       accountFor(token);

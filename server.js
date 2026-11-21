@@ -44,6 +44,12 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         if(!rawLng?.trim()||!rawLat?.trim()||!require('./recommendation').valid({lng,lat})){const error=Error('坐标无效');error.status=400;throw error;}
         return sendSuccess(res,200,await mapProvider.reverse(lng,lat));
       }
+      if (name === 'api/admin/account') {
+        if (req.method === 'GET') {
+          const username = new URL(req.url, 'http://localhost').searchParams.get('username');
+          return sendJson(res, 200, store.lookupAccount(token, username));
+        }
+      }
       if (name === 'api/account/register' && req.method === 'POST') return sendJson(res, 201, store.register(await bodyJson(req)));
       if (name === 'api/account/login' && req.method === 'POST') return sendJson(res, 200, store.login(await bodyJson(req)));
       if (name === 'api/account' && req.method === 'GET') return sendJson(res, 200, store.account(token));

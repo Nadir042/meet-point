@@ -1040,7 +1040,7 @@
       }
       const a = active(), belongs = visibleActivities().some(item => item.id === a.id);
       const renameActivity = belongs && isShared(a) ? `<details class="identity-activity"><summary>修改本活动昵称</summary><form id="rename-form" class="identity-form"><label>本活动昵称<input name="name" maxlength="16" required value="${esc(self().name)}"></label><button type="submit" class="button light">保存活动昵称</button></form></details>` : '';
-      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
+      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}${accountAuth?.admin ? '<button class="button light" data-action="admin-accounts">账号管理</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
       const guestSettings = `<p class="identity-current">当前游客 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p><form id="profile-name-form" class="identity-form"><label>默认昵称<input name="name" maxlength="16" required value="${currentProfile().name === '游客' ? '' : esc(currentProfile().name)}"></label><button class="button light" type="submit">保存默认昵称</button></form><p class="identity-help">新活动会预填默认昵称，已有活动昵称不变。</p>${renameActivity}${localIdentityChoices()}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="new-profile">新建游客身份</button><button class="text-button" data-action="merge-profile">合并旧身份</button><button class="text-button" data-action="account-login">注册／登录</button></div>`;
       openModal(isAccount() ? '我的账号' : '游客身份与设置', `<div class="identity-settings">${isAccount() ? accountSettings : guestSettings}</div>`);
     },
@@ -1059,6 +1059,7 @@
     },
     'account-login': () => openAccount('login'),
     'account-register': () => openAccount('register'),
+    'admin-accounts': () => showAccountManagement(),
     'account-logout': async () => {
       const previous = accountAuth?.previousProfileId;
       try { await api('/api/account/logout', 'POST', {}, accountAuth.token); } catch { /* Local logout still clears this browser. */ }
@@ -1154,6 +1155,11 @@
       if (event.target.id === 'identity' && profiles.activeId === 'examples') { state.identities[active().id] = event.target.value; selectedPoi = null; save(); render(); $('#identity')?.focus({ preventScroll: true }); toast(`已切换到 ${self().name} 的演示视角`); }
     } catch (error) { toast(error.message); }
   });
+  function showAccountManagement(target) {
+    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p>` : '';
+    openModal('账号管理', `<form id="admin-query-form"><label>完整登录账号名<input name="username" required maxlength="30"></label><button class="button primary" type="submit">查询账号</button></form>${result}`);
+  }
+
   document.addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.target;
@@ -1161,6 +1167,11 @@
     if (await journal.submit(form)) return;
     const data = new FormData(form);
     try {
+      if (form.id === 'admin-query-form') {
+        showAccountManagement();
+        showAccountManagement(await api('/api/admin/account?username=' + encodeURIComponent(data.get('username')), 'GET', undefined, accountAuth.token));
+        return;
+      }
       if (form.getAttribute('id') === 'request-form') {
         if (await run('request', { round: Number(data.get('round')), reason: data.get('reason') }, '申请已提交，处理状态对所有成员可见')) closeModal();
       } else if (form.getAttribute('id') === 'reject-form') {
