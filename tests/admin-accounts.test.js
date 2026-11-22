@@ -65,3 +65,17 @@ test('管理员只能巡查目标账号参与的活动及目标账号发布的�
   assert.equal(store.reviewAccountPhoto(admin, 'target', activity.id, targetPhoto).mime, 'image/png');
   assert.throws(() => store.reviewAccountPhoto(admin, 'target', activity.id, otherPhoto), { status: 404 });
 });
+
+test('反馈由服务端保存且只对提交账号可见', t => {
+  const store = openStore(':memory:');
+  t.after(() => store.close());
+  const password = 'password123';
+  const admin = store.register({ username: 'admin', password });
+  const member = store.register({ username: 'member', password });
+  const other = store.register({ username: 'other', password });
+  const submitted = store.submitFeedback(member.token, { category: '功能建议', content: '希望增加提醒' });
+  assert.equal(submitted.status, '待处理');
+  assert.equal(store.listMyFeedback(store.login({ username: 'member', password }).token).items[0].id, submitted.id);
+  assert.deepEqual(store.listMyFeedback(other.token).items, []);
+  assert.throws(() => store.submitFeedback(member.token, { category: '功能建议', content: 'x'.repeat(1001) }), { status: 400 });
+});

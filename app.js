@@ -121,6 +121,7 @@
   let poiTrigger = null;
   let staticMapState = { key: null, url: null, error: null, loading: false, controller: null };
   let menuOpen = false;
+  let accountFeedback = [];
   let focusBeforeModal = null;
   let toastTimer;
   let pageAlertTimer;
@@ -148,6 +149,7 @@
         if (profiles.activeId === profileId) acceptShared({ activity });
       }
       saveProfiles();
+      accountFeedback = (await api('/api/feedback', 'GET', undefined, accountAuth.token)).items;
       return [];
     }
     return Promise.allSettled(Object.entries(sharedSessions).filter(([, session]) => session.profileId === profileId).map(async ([key, session]) => {
@@ -644,10 +646,10 @@
   }
   function feedbackPage() {
     ensureDemoFeedback();
-    const mine = state.feedback.filter(f => isAccount() ? f.accountId === accountAuth.id : f.memberId === viewer());
+    const mine = isAccount() ? accountFeedback : state.feedback.filter(f => f.memberId === viewer());
     return `<div class="page-heading feedback-heading"><div><div class="eyebrow">BETTER, WITH YOU</div><h1>听听你的建议<span class="heading-dot">.</span></h1><p>告诉我们你的想法，或记录演示中遇到的问题。</p></div><figure class="feedback-heading-art"><img src="./assets/feedback-idea.png" alt="手绘灯泡点亮新想法"></figure></div>
-      <div class="feedback-layout"><section class="panel"><h2>留下你的建议</h2><form id="feedback-form"><label>反馈类型<select name="category"><option>功能建议</option><option>体验问题</option><option>推荐结果</option><option>其他反馈</option></select></label><label>反馈内容<textarea name="content" rows="6" maxlength="1000" required placeholder="你希望 MeetPoint 可以做得更好的地方……"></textarea></label><p class="panel-tip">演示反馈只保存在当前浏览器，不会发送给团队。真实管理员处理流程待后端接入。</p><button class="button primary" type="submit">保存反馈 ${icon('arrow')}</button></form></section>
-      <section class="panel"><h2>我的反馈 <span class="count-badge">${mine.length}</span></h2>${mine.length ? mine.map(f => `<article class="feedback-item"><div class="inline"><strong>${esc(f.category)}</strong><span class="status">本地已记录</span></div><p>${esc(f.content)}</p><small>${new Date(f.at).toLocaleString('zh-CN')}</small></article>`).join('') : '<div class="empty-state compact"><p>还没有反馈记录。<br>你的想法，会让下一次见面更好。</p></div>'}</section></div>`;
+      <div class="feedback-layout"><section class="panel"><h2>留下你的建议</h2><form id="feedback-form"><label>反馈类型<select name="category"><option>功能建议</option><option>体验问题</option><option>推荐结果</option><option>其他反馈</option></select></label><label>反馈内容<textarea name="content" rows="6" maxlength="1000" required placeholder="你希望 MeetPoint 可以做得更好的地方……"></textarea></label><p class="panel-tip">登录后提交的反馈会保存到服务器。</p><button class="button primary" type="submit">提交反馈 ${icon('arrow')}</button></form></section>
+      <section class="panel"><h2>我的反馈 <span class="count-badge">${mine.length}</span></h2>${mine.length ? mine.map(f => `<article class="feedback-item"><div class="inline"><strong>${esc(f.category)}</strong><span class="status">${esc(f.status || '本地已记录')}</span></div><p>${esc(f.content)}</p><small>${new Date(f.createdAt || f.at).toLocaleString('zh-CN')}</small></article>`).join('') : '<div class="empty-state compact"><p>还没有反馈记录。<br>你的想法，会让下一次见面更好。</p></div>'}</section></div>`;
   }
   function ensureDemoFeedback() {
     if (accountAuth?.username !== FULL_DEMO_USERNAME || state.feedback.some(item => item.demoSeed === FULL_DEMO_MARKER && item.accountId === accountAuth.id)) return;
@@ -1308,8 +1310,11 @@
       } else if (form.getAttribute('id') === 'feedback-form') {
         const content = data.get('content').trim();
         if (!content) throw new Error('请填写反馈内容');
-        state.feedback.unshift({ id: M.uid(), memberId: viewer(), accountId: isAccount() ? accountAuth.id : null, category: data.get('category'), content: content.slice(0, 1000), at: Date.now() });
-        save(); render(); toast('反馈已保存在本浏览器');
+        const item = await api('/api/feedback', 'POST', { category: data.get('category'), content }, accountAuth.token);
+        accountFeedback.unshift(item);
+        form.reset();
+        render();
+        toast('反馈已提交');
       }
     } catch (error) {
       if (['account-login-form', 'account-register-form'].includes(form.getAttribute('id'))) {

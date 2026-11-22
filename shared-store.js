@@ -38,6 +38,11 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     CREATE TABLE IF NOT EXISTS account_sessions (
       token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, expires_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+      category TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT '待处理'
+    );
     CREATE TABLE IF NOT EXISTS account_memberships (
       account_id TEXT NOT NULL, activity_id TEXT NOT NULL, member_id TEXT NOT NULL,
       PRIMARY KEY(account_id, activity_id), UNIQUE(activity_id, member_id)
@@ -174,6 +179,21 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         if (isDisabled(target.id)) fail(409, '请先恢复该账号');
         db.prepare('INSERT OR IGNORE INTO administrators VALUES (?)').run(target.id);
       });
+    },
+    submitFeedback(token, input) {
+      const accountId = accountFor(token);
+      const categories = ['功能建议', '体验问题', '推荐结果', '其他反馈'];
+      const category = input?.category;
+      const content = typeof input?.content === 'string' ? input.content.trim() : '';
+      if (!categories.includes(category) || !content || content.length > 1000)
+        fail(400, '请选择反馈类型并填写 1—1000 字内容');
+      const item = { id: randomUUID(), category, content, createdAt: Date.now(), status: '待处理' };
+      db.prepare('INSERT INTO feedback VALUES (?, ?, ?, ?, ?, ?)').run(item.id, accountId, category, content, item.createdAt, item.status);
+      return item;
+    },
+    listMyFeedback(token) {
+      const accountId = accountFor(token);
+      return { items: db.prepare('SELECT id, category, content, created_at AS createdAt, status FROM feedback WHERE account_id = ? ORDER BY created_at DESC, id DESC').all(accountId) };
     },
     lookupAccount(token, username) {
       requireAdmin(token);
