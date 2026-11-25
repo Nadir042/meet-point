@@ -226,7 +226,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         const a = M.act(activity, memberId, 'requirements', {
           origin: input.origin, modes: input.modes, mode: input.mode,
           preferences: input.preferences, preference: input.preference, preferenceDetail: input.preferenceDetail,
-          budget: input.budget, shared: input.shared === true
+          budget: input.budget, budgetMin: input.budgetMin, budgetMax: input.budgetMax, shared: input.shared === true
         });
         update.run(JSON.stringify(a), id);
         return { activity: project(a, memberId) };
@@ -238,7 +238,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if(memberId!==activity.hostId) fail(403,'只有发起者可以推荐');
       if(activity.paused||['completed','cancelled'].includes(activity.status)) fail(409,'当前活动不能推荐');
       if(!M.ready(activity)) fail(400,'请所有成员先填写完整需求');
-      M.act(activity, memberId, input.action, input.data || {});
+      M.act(activity, memberId, input.action, input.data || {}, undefined, { validateOnly: true });
       const version=JSON.stringify(activity);
       const signal=AbortSignal.timeout(300000);
       const bounded={search:(...args)=>provider.search(args[0],args[1],undefined,signal),route:(...args)=>provider.route(...args,signal)};

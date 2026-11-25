@@ -63,10 +63,32 @@
   }
   function memberPreferences(member) {
     const values = Array.isArray(member?.preferences) ? member.preferences : [member?.preference];
-    return [...new Set(values.map(oldPreference).filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
+    const preferences = Array.isArray(member?.preferenceSelections) ? values : values.map(oldPreference);
+    return [...new Set(preferences.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
+  }
+  function memberPreferenceSelection(member, type) {
+    if (Array.isArray(member.preferenceSelections))
+      return { selections: member.preferenceSelections, detail: member.preferenceDetail || '' };
+    const preferences = memberPreferences(member);
+    const options = OPTIONS[type] || [];
+    const detail = preferences.find(preference => !options.includes(preference)) || '';
+    const selections = preferences.filter(preference => options.includes(preference) && preference !== '其他');
+    if (detail) selections.push('其他');
+    return { selections, detail };
+  }
+  const MAX_BUDGET = 5000;
+  function memberBudget(member) {
+    return { min: member.budgetMin ?? null, max: member.budgetMax ?? member.budget };
+  }
+  function validBudgetAmount(amount) {
+    return Number.isFinite(amount) && amount >= 0 && amount <= MAX_BUDGET;
+  }
+  function fitsBudget(member, price) {
+    const { min, max } = memberBudget(member);
+    return !Number.isFinite(price) || price < 0 || (price >= (min ?? 0) && (!Number.isFinite(max) || price <= max));
   }
   function member(name, originIndex = null, mode = '公共交通', preference = '不限', budget = 150, shared = false) {
-    return { id: uid(), name, origin: originIndex === null ? null : clone(ORIGINS[originIndex]), modes: [mode], preferences: [preference], mode, preference, budget, shared };
+    return { id: uid(), name, origin: originIndex === null ? null : clone(ORIGINS[originIndex]), modes: [mode], preferences: [preference], mode, preference, budgetMin: 0, budgetMax: budget, budget, shared };
   }
   function navigationUrl(origin, destination, mode) {
     const modes = { '公共交通': 'bus', '驾车': 'car', '步行': 'walk', '骑行': 'ride' };
@@ -97,10 +119,12 @@
     };
   }
   function ready(a) {
-    return a.members.length >= 2 && a.members.length <= 10 && a.members.every(m =>
-      m.origin && Number.isFinite(m.origin.lng) && Number.isFinite(m.origin.lat) &&
-      memberModes(m).length > 0 && memberPreferences(m).length > 0 &&
-      Number.isFinite(m.budget) && m.budget >= 0);
+    return a.members.length >= 2 && a.members.length <= 10 && a.members.every(m => {
+      const { min, max } = memberBudget(m);
+      return m.origin && Number.isFinite(m.origin.lng) && Number.isFinite(m.origin.lat) &&
+        memberModes(m).length > 0 && memberPreferences(m).length > 0 &&
+        validBudgetAmount(max) && (min === null || (validBudgetAmount(min) && min <= max));
+    });
   }
   function activityDetailView(a) {
     const requirementsReady = typeof a.requirementsReady === 'boolean' ? a.requirementsReady : ready(a);
@@ -113,7 +137,7 @@
   }
   function rankedPlaces(a) {
     assert(ready(a), '需要 2—10 名成员，且每个人都已填写出行需求');
-    return POIS.filter(p => p.tags.includes(a.type)).map(p => {
+    return POIS.filter(p => p.tags.includes(a.type) && a.members.every(m => fitsBudget(m, p.budget))).map(p => {
       const routes = a.members.map(m => memberModes(m).map(mode => {
         const distance = Math.hypot((m.origin.lng - p.lng) * 95, (m.origin.lat - p.lat) * 111);
         const speed = { '公共交通': 0.42, '驾车': 0.52, '步行': 0.075, '骑行': 0.2 }[mode];
@@ -123,14 +147,12 @@
       const times = routes.map(r => r.minutes);
       const average = Math.round(times.reduce((s, t) => s + t, 0) / times.length);
       const gap = Math.max(...times) - Math.min(...times);
-      const match = a.members.reduce((sum, m) => sum + (
-        (memberPreferences(m).some(preference => p.preference.includes(preference)) ? 10 : 6) * 0.6 +
-        (m.budget >= p.budget ? 10 : Math.max(2, 10 - (p.budget - m.budget) / 20)) * 0.4
-      ), 0) / a.members.length;
+      const preferenceScore = a.members.reduce((sum, m) => sum +
+        (memberPreferences(m).some(preference => p.preference.includes(preference)) ? 10 : 6), 0) / a.members.length;
       const dimensions = {
         fairness: round(clamp(10 - gap / 8)),
         time: round(clamp(10 - average / 12)),
-        preference: round(match),
+        preference: round(preferenceScore * 0.6 + 10 * 0.4),
         convenience: p.transit
       };
       // The four scoring dimensions use the agreed equal weighting.
@@ -285,7 +307,7 @@
     a.deadline = now + DAY;
     a.remainingMs = null;
   }
-  function act(activity, actorId, action, data = {}, now = Date.now()) {
+  function act(activity, actorId, action, data = {}, now = Date.now(), { validateOnly = false } = {}) {
     const a = tick(activity, now);
     const actor = a.members.find(m => m.id === actorId);
     if (action !== 'join') assert(actor, '当前身份不在活动中');
@@ -347,16 +369,27 @@
           assert(modes.length > 0 && modes.every(mode => MODES.includes(mode)), '请选择交通方式');
           assert(selectedPreferences.length > 0 && selectedPreferences.every(preference => OPTIONS[a.type].includes(preference)), '请选择适用的活动偏好');
           assert(!selectedPreferences.includes('不限') || selectedPreferences.length === 1, '不限不能与其他活动偏好同时选择');
-          const detail = String(data.preferenceDetail || '').trim();
-          if (selectedPreferences.includes('其他')) assert(detail && detail.length <= 20, '其他偏好应填写 1—20 个字');
+          const customSelected = selectedPreferences.includes('其他');
+          const detail = customSelected && typeof data.preferenceDetail === 'string' ? data.preferenceDetail.trim() : '';
+          if (customSelected) assert(detail && detail.length <= 20, '其他偏好应填写 1—20 个字', 'INVALID_REQUEST', 400);
           const preferences = selectedPreferences.map(preference => preference === '其他' ? detail : preference);
-          assert(Number.isFinite(data.budget) && data.budget >= 0 && data.budget <= 5000, '预算应在 0—5000 元之间');
-          Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), modes, preferences, mode: modes[0], preference: preferences[0], budget: data.budget, shared: !!data.shared });
+          const hasRange = data.budgetMin !== undefined || data.budgetMax !== undefined;
+          const budgetMin = hasRange ? data.budgetMin : null;
+          const budgetMax = hasRange ? data.budgetMax : data.budget;
+          assert(!hasRange || validBudgetAmount(budgetMin), '最低预算应在 0—5000 元之间', 'INVALID_REQUEST', 400);
+          assert(validBudgetAmount(budgetMax), '最高预算应在 0—5000 元之间', 'INVALID_REQUEST', 400);
+          assert(budgetMin === null || budgetMin <= budgetMax, '最低预算不能高于最高预算', 'INVALID_REQUEST', 400);
+          Object.assign(actor, {
+            origin: clone({ ...origin, name: origin.name.trim() }), modes, mode: modes[0],
+            preferences, preference: preferences[0], preferenceSelections: selectedPreferences, preferenceDetail: detail,
+            budgetMin, budgetMax, budget: budgetMax, shared: !!data.shared
+          });
           break;
         }
         case 'recommend': {
           host();
           assert(a.round === 0, '已有推荐，请审批当前轮次的重新推荐申请', 'REQUEST_NOT_FOUND');
+          if (validateOnly) return a;
           const candidates = data.recommendation ? clone(data.recommendation.candidates) : recommend(a);
           assert(candidates.length, '没有适合的候选，请调整活动需求', 'NO_CANDIDATES');
           startRound(a, candidates, data.recommendation?.groups || groupCandidates(candidates), now);
@@ -378,6 +411,7 @@
           const decision = action === 'reject-request' ? 'rejected' : data.decision;
           assert(['approved', 'rejected'].includes(decision), '请选择同意或拒绝');
           if (decision === 'approved') {
+            if (validateOnly) return a;
             const candidates = data.recommendation ? clone(data.recommendation.candidates) : recommend(a);
             assert(candidates.length, '没有适合的候选，请调整活动需求', 'NO_CANDIDATES');
             startRound(a, candidates, data.recommendation?.groups || groupCandidates(candidates), now);
@@ -454,7 +488,7 @@
       return a;
     });
   }
-  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, MODES, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, activityDetailView, memberModes, memberPreferences, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
+  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, MODES, MAX_BUDGET, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, activityDetailView, memberModes, memberPreferences, memberPreferenceSelection, memberBudget, validBudgetAmount, fitsBudget, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MeetPoint = api;
 })(typeof window !== 'undefined' ? window : globalThis);

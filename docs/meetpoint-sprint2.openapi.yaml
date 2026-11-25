@@ -206,9 +206,11 @@ paths:
       description: |-
         只接受已从高德搜索或逆地理编码确认的地点。旧活动的 originIndex 需要重新选点。
 
-        - 聚餐：不限、火锅、烧烤、中餐、西餐、咖啡甜品。
-        - 休闲娱乐：不限、KTV、桌游、电影院、公园、商场、剧本杀、密室逃脱、美甲、手工、写真、拼豆。
-        - 线下会面：不限、学习讨论、工作交流、朋友会面、安静场所、交通便利。
+        - 聚餐：不限、火锅、烧烤、中餐、西餐、咖啡甜品、其他。
+        - 休闲娱乐：不限、KTV、桌游、电影院、公园、商场、剧本杀、密室逃脱、美甲、手工、写真、其他。
+        - 线下会面：不限、学习讨论、工作交流、朋友会面、逛街、其他。
+        - 活动偏好可多选。不限须单独选择，选择其他时须填写 preferenceDetail。
+        - 人均预算区间的两端均包含在内，最低预算不得高于最高预算。旧客户端可仅提交预算上限 budget。
       parameters:
       - {$ref: '#/components/parameters/ActivityId'}
       requestBody:
@@ -222,9 +224,11 @@ paths:
                 value:
                   origin: {provider: amap, placeId: B000A8URXB, name: 人民广场, address: 上海市黄浦区人民大道, category: 地名地址信息, lng: 121.4752,
                     lat: 31.238}
-                  mode: 公共交通
-                  preference: 火锅
-                  budget: 100
+                  modes: [公共交通]
+                  preferences: [火锅, 其他]
+                  preferenceDetail: 清真餐厅
+                  budgetMin: 50
+                  budgetMax: 150
                   shared: false
       responses:
         '200':
@@ -492,7 +496,7 @@ paths:
       summary: 执行活动操作
       operationId: actOnActivity
       description: |-
-        按 action 区分操作，沿用同一 HTTP 入口。推荐的正常完成时间目标为 10 秒。综合评分对公平性、整体耗时、偏好匹配与交通便利等权平均，缺失数据时按有效维度平均。预算在有可靠消费数据时纳入偏好。候选任一成员路线失败则不参与评分；无可用候选时保留原轮次。
+        按 action 区分操作，沿用同一 HTTP 入口。推荐的正常完成时间目标为 10 秒。综合评分对公平性、整体耗时、偏好匹配与交通便利等权平均，缺失数据时按有效维度平均。有已知人均消费的地点须符合全体成员的预算，消费未知的地点仍可参与推荐。候选任一成员路线失败则不参与评分；无可用候选时保留原轮次。
 
         - **首次推荐** — 发起者执行。需要 2～10 名有效成员且需求完整。推荐成功才增加轮次，开启 24 小时投票。地图或路线失败时保留原轮次。
         - **投票或改票** — 校验 round 与 candidateId。重复提交更新本人选票，身份由 Bearer 令牌确定。
@@ -1414,6 +1418,7 @@ components:
         name: {type: string}
         address: {type: string}
         category: {type: string}
+        pricePerPerson: {type: number, minimum: 0, nullable: true, description: 人均消费（元），缺失时为 null}
         lng: {type: number, minimum: -180, maximum: 180, description: GCJ-02 经度}
         lat: {type: number, minimum: -90, maximum: 90, description: GCJ-02 纬度}
     Route:
@@ -1454,6 +1459,7 @@ components:
         name: {type: string}
         address: {type: string}
         category: {type: string}
+        pricePerPerson: {type: number, minimum: 0, nullable: true, description: 人均消费（元），缺失时为 null}
         lng: {type: number, minimum: -180, maximum: 180, description: GCJ-02 经度}
         lat: {type: number, minimum: -90, maximum: 90, description: GCJ-02 纬度}
         routes: {type: array, items: {$ref: '#/components/schemas/Route'}, description: 仅含本人及公开出发地成员的路线}
@@ -1529,6 +1535,11 @@ components:
           - {type: object, nullable: true, enum: [null]}
         originReady: {type: boolean, description: 已填写有效出发地；对其他成员隐藏出发地时也可为 true}
         shared: {type: boolean}
+        preferenceSelections: {type: array, items: {type: string}, description: 表单所选偏好，包括其他选项}
+        preferenceDetail: {type: string, description: 其他偏好原文，取消选择后为空字符串}
+        budgetMin: {type: number, minimum: 0, maximum: 5000, nullable: true, description: 最低预算，旧记录可缺失}
+        budgetMax: {type: number, minimum: 0, maximum: 5000, description: 最高预算，旧记录可使用 budget}
+        budget: {type: number, minimum: 0, maximum: 5000, description: 兼容字段，等于最高预算}
     Activity:
       type: object
       required: [id, status, paused, round, deadline, remainingMs, winningCandidateId, members, candidates, groups, requests,
@@ -1560,13 +1571,32 @@ components:
             activity: {$ref: '#/components/schemas/Activity'}
     RequirementsInput:
       type: object
-      required: [origin, mode, preference, budget, shared]
+      required: [origin]
+      allOf:
+      - anyOf:
+        - required: [modes]
+        - required: [mode]
+      - anyOf:
+        - required: [preferences]
+        - required: [preference]
+      - anyOf:
+        - required: [budgetMin, budgetMax]
+        - required: [budget]
+          not:
+            anyOf:
+            - required: [budgetMin]
+            - required: [budgetMax]
       properties:
         origin: {$ref: '#/components/schemas/Location'}
+        modes: {type: array, minItems: 1, items: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}}
         mode: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}
+        preferences: {type: array, minItems: 1, items: {type: string}, description: 按活动类型选择}
         preference: {type: string, description: 按活动类型选择，取值见接口说明}
-        budget: {type: number, minimum: 0, description: 预算，单位人民币元}
-        shared: {type: boolean, description: 是否向其他成员公开出发地}
+        preferenceDetail: {type: string, nullable: true, maxLength: 20, description: 选择其他时填写，去除首尾空白后不能为空}
+        budgetMin: {type: number, minimum: 0, maximum: 5000, description: 最低预算（元）}
+        budgetMax: {type: number, minimum: 0, maximum: 5000, description: 最高预算（元）}
+        budget: {type: number, minimum: 0, maximum: 5000, description: 兼容旧客户端的预算上限（元）}
+        shared: {type: boolean, default: false, description: 是否向其他成员公开出发地}
       additionalProperties: false
     ErrorResponse:
       type: object

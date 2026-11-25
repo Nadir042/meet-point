@@ -17,7 +17,8 @@ function preparedActivity({ title, type = '聚餐', date, time = '18:30', names,
       origin: M.ORIGINS[index % M.ORIGINS.length],
       mode: modeAt(index),
       preference: index % 3 || type !== '聚餐' ? '不限' : '火锅',
-      budget: 90 + index * 20,
+      budgetMin: 0,
+      budgetMax: (type === '线下会面' ? 90 : 150) + index * 20,
       shared: index % 3 === 0
     }, now);
   }

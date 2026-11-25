@@ -53,7 +53,9 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch,qps=Number(process
       for(const term of terms){
         const body=await request(center?'v3/place/around':'v3/place/text',{keywords:term,city,offset:'20',extensions:'all',...(center?{location:`${center.lng.toFixed(6)},${center.lat.toFixed(6)}`,radius:'20000'}:{citylimit:'true'})},signal);
         for(const p of body.pois||[]){
-          const item={...location(p),rating:number(p.biz_ext?.rating)};
+          const rawPrice=p.biz_ext?.cost;
+          const price=typeof rawPrice==='number'||(typeof rawPrice==='string'&&rawPrice.trim())?number(rawPrice):null;
+          const item={...location(p),rating:number(p.biz_ext?.rating),pricePerPerson:price!==null&&price>=0?price:null};
           const id=item.placeId||[item.name,item.lng,item.lat].join('|');
           if(!seen.has(id)){seen.add(id);results.push(item);}
         }

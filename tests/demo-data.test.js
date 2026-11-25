@@ -32,7 +32,8 @@ test('recommendation progress distinguishes missing members, incomplete requirem
   assert.deepEqual(M.recommendationProgress(entries[2].activity), { total: 3, readyCount: 3, stage: 'ready' });
 });
 
-test('demo account replacement is idempotent and refuses to overwrite an ordinary account', () => {
+test('demo account replacement is idempotent and refuses to overwrite an ordinary account', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-demo-data-'));
   const store = openStore(path.join(directory, 'test.sqlite'));
   try {

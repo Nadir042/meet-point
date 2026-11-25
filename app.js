@@ -638,7 +638,7 @@
     const a = active();
     const members = M.visibleMembers(a, viewer());
     return `${activityHeader()}<section class="panel members-page"><div class="panel-heading"><h3>每个人的出行偏好</h3><button class="button primary" data-action="requirements" ${terminal(a) || a.paused ? 'disabled' : ''}>编辑我的需求</button></div>
-      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>预算上限</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(M.memberModes(m).join('、'))}</td><td>${esc(M.memberPreferences(m).join('、'))}</td><td>¥${m.budget}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
+      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>人均预算</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(M.memberModes(m).join('、'))}</td><td>${esc(M.memberPreferences(m).join('、'))}</td><td>${esc(formatBudget(m))}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
       <div class="notice">${icon('lock')} 具体出发地只对本人或经本人授权的其他成员展示。此 Demo 的身份切换仅用于演示。</div>
       <div class="inline activity-member-actions">${isHost() ? `<button class="button light" data-action="invite">邀请伙伴</button><button class="text-button" data-action="manage">管理活动</button>` : ''}<button class="text-button danger" data-action="leave">退出活动</button></div></section>`;
   }
@@ -813,22 +813,32 @@
     openModal(registering ? '创建 MeetPoint 账号' : '欢迎回到 MeetPoint', `<div class="auth-intro"><p>${registering ? '保存你参与的活动，换一台设备也能继续。' : '登录后继续查看和管理你的相聚活动。'}</p></div><div class="auth-mode" role="tablist" aria-label="账号入口"><button type="button" role="tab" aria-selected="${!registering}" class="${!registering ? 'active' : ''}" data-action="account-login">登录</button><button type="button" role="tab" aria-selected="${registering}" class="${registering ? 'active' : ''}" data-action="account-register">注册</button></div><form id="account-${registering ? 'register' : 'login'}-form" class="auth-form"><label>账号名称<input name="username" minlength="3" maxlength="30" required autocomplete="username" placeholder="3—30 个字符" autofocus></label><label>${registering ? '设置密码' : '密码'}<input name="password" type="password" minlength="8" required autocomplete="${registering ? 'new-password' : 'current-password'}" placeholder="至少 8 位"></label><p class="auth-error" role="alert" aria-live="polite"></p><button class="button primary full auth-submit" type="submit">${registering ? '注册并进入工作台' : '登录并进入工作台'} ${icon('arrow')}</button></form><p class="auth-note">账号仅用于恢复活动记录；出发地是否公开仍由你自己决定。</p>`, false, 'auth-dialog');
   }
   let selectedOrigin = null;
+  function formatBudget(member) {
+    const { min, max } = M.memberBudget(member);
+    if (!M.validBudgetAmount(max)) return '待填写';
+    return min === null ? `≤ ¥${max}` : `¥${min}–${max}`;
+  }
   function requirements() {
     selectedOrigin = self()?.origin || null;
     const a = active(), m = self();
     if (!m) return toast('请先加入活动');
     const preferenceOptions = M.OPTIONS[a.type];
     const selectedModes = M.memberModes(m);
-    const storedPreferences = M.memberPreferences(m);
-    const customPreference = storedPreferences.find(preference => !preferenceOptions.includes(preference)) || '';
-    const selectedPreferences = [...storedPreferences.filter(preference => preferenceOptions.includes(preference)), ...(customPreference ? ['其他'] : [])];
+    const { selections: selectedPreferences, detail: customPreference } = M.memberPreferenceSelection(m, a.type);
+    const customSelected = selectedPreferences.includes('其他');
+    const budget = M.memberBudget(m);
     const choice = (name, value, checked) => `<label class="multi-choice-option"><input type="checkbox" name="${name}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(value)}</span></label>`;
     openModal('我的出行需求', `<p class="modal-intro">先告诉我们你从哪里出发。具体位置是否向伙伴公开，由你决定。</p><form id="requirements-form" novalidate>
       <label class="requirement-field" data-requirement-field="origin"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>出发地</span><input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="例如：人民广场"><small class="field-error" role="alert"></small></label><div class="origin-actions"><button type="button" class="button light" id="search-origin">搜索地点</button><button type="button" class="button light" id="use-current-location">${icon('pin')} 使用当前位置</button></div><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">搜索地点，或在你同意后使用设备当前位置。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" class="origin-selected" role="status">${m.origin ? `已选择：${esc(m.origin.name)} · ${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择出发地"}</p>
       <fieldset class="requirement-field requirement-choice-field" data-requirement-field="mode"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>交通方式 <small>可多选，推荐时采用耗时最短路线</small></legend><div class="multi-choice-grid">${M.MODES.map(mode => choice('modes', mode, selectedModes.includes(mode))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
       <fieldset class="requirement-field requirement-choice-field" data-requirement-field="preference"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>活动偏好 <small>可多选；“不限”不能和其他选项同时选择</small></legend><div class="multi-choice-grid preference-choice-grid">${preferenceOptions.map(preference => choice('preferences', preference, selectedPreferences.includes(preference))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
-      <label class="requirement-field" data-requirement-field="preferenceDetail" ${selectedPreferences.includes('其他') ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="请填写具体偏好（20 个字以内）"><small class="field-error" role="alert"></small></label>
-      <label class="requirement-field" data-requirement-field="budget"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>人均预算上限（元）</span><input name="budget" type="number" min="0" max="5000" value="${m.budget}" required><small class="field-error" role="alert"></small></label>
+      <label class="requirement-field" data-requirement-field="preferenceDetail" ${customSelected ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="例如：安静的书店" aria-describedby="preference-detail-error" ${customSelected ? 'required' : 'disabled'}><small id="preference-detail-error" class="field-error" role="alert"></small></label>
+      <fieldset class="requirement-choice-field"><legend class="field-label">人均预算（元）</legend>
+        <div class="form-grid">
+          <label class="requirement-field" data-requirement-field="budgetMin"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>最低预算</span><input name="budgetMin" type="number" min="0" max="${M.MAX_BUDGET}" step="any" value="${budget.min ?? ''}" aria-describedby="budget-min-error" ${budget.min === null ? 'placeholder="未设置"' : 'required'}><small id="budget-min-error" class="field-error" role="alert"></small></label>
+          <label class="requirement-field" data-requirement-field="budgetMax"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>最高预算</span><input name="budgetMax" type="number" min="0" max="${M.MAX_BUDGET}" step="any" value="${budget.max ?? ''}" aria-describedby="budget-max-error" required><small id="budget-max-error" class="field-error" role="alert"></small></label>
+        </div>
+      </fieldset>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
       <button type="submit" class="button primary full">保存我的需求 ${icon('check')}</button></form>`);
@@ -895,13 +905,18 @@
     const modes = [...form.querySelectorAll('input[name="modes"]:checked')].map(input => input.value);
     const preferences = [...form.querySelectorAll('input[name="preferences"]:checked')].map(input => input.value);
     const detail = form.elements.preferenceDetail.value.trim();
-    const budget = form.elements.budget.value.trim();
+    const min = form.elements.budgetMin;
+    const max = form.elements.budgetMax;
+    const hasMin = min.value !== '';
+    const minValid = !min.validity.badInput && (hasMin ? M.validBudgetAmount(min.valueAsNumber) : !min.required);
+    const maxValid = M.validBudgetAmount(max.valueAsNumber);
     return {
       origin: selectedOrigin ? '' : '请选择并确认出发地',
       mode: modes.length > 0 && modes.every(mode => M.MODES.includes(mode)) ? '' : '请至少选择一种交通方式',
       preference: preferences.length > 0 && preferences.every(preference => M.OPTIONS[active().type].includes(preference)) && (!preferences.includes('不限') || preferences.length === 1) ? '' : '请选择活动偏好；“不限”不能和其他选项同时选择',
       preferenceDetail: !preferences.includes('其他') || (detail && detail.length <= 20) ? '' : '请填写 1—20 个字的其他偏好',
-      budget: budget !== '' && Number.isFinite(Number(budget)) && Number(budget) >= 0 && Number(budget) <= 5000 ? '' : '预算应在 0—5000 元之间'
+      budgetMin: !minValid ? '请输入 0—5000 元的最低预算' : hasMin && maxValid && min.valueAsNumber > max.valueAsNumber ? '最低预算不能高于最高预算' : '',
+      budgetMax: maxValid ? '' : '请输入 0—5000 元的最高预算'
     };
   }
   function setRequirementError(form, name, message, animate = false) {
@@ -947,7 +962,10 @@
       if (event.target.value !== '不限' && event.target.checked && unlimited) unlimited.checked = false;
       const custom = form.querySelector('[data-requirement-field="preferenceDetail"]');
       custom.hidden = !form.querySelector('input[name="preferences"][value="其他"]')?.checked;
-      if (custom.hidden) custom.querySelector('input').value = '';
+      const detail = form.elements.preferenceDetail;
+      detail.disabled = custom.hidden;
+      detail.required = !custom.hidden;
+      if (custom.hidden) detail.value = '';
     }
     if (form.dataset.validationActive === 'true') validateRequirements(form);
   });
@@ -974,7 +992,8 @@
   }
   function scoreDetails(p) {
     const a=active();
-    return '<div class="detail-score"><span>综合参考分</span><strong>'+p.score.toFixed(1)+'</strong><p>有效维度等权平均；预算无可靠消费数据时不扣分。</p></div>'+
+    const price = p.pricePerPerson ?? (p.provider === 'amap' ? null : p.budget);
+    return '<div class="detail-score"><span>综合参考分</span><strong>'+p.score.toFixed(1)+'</strong><p>人均消费：'+(Number.isFinite(price) ? esc(String(price))+' 元' : '暂无数据')+'</p></div>'+
     '<div>'+Object.entries(p.dimensions).map(([key,value])=>'<p>'+esc(({fairness:'公平性',time:'整体耗时',preference:'偏好匹配',convenience:'便利性'})[key]||key)+'：'+formatScore(value)+'</p>').join('')+'</div>'+
     '<p>'+esc((p.reasons||[]).join('；'))+'</p><table><tr><th>成员</th><th>交通方式</th><th>时间</th><th>费用</th></tr>'+p.routes.map(r=>'<tr><td>'+esc(a.members.find(m=>m.id===r.memberId)?.name||'成员')+'</td><td>'+esc(r.mode||'未知')+'</td><td>'+r.minutes+' 分钟</td><td>'+(r.costStatus==='known'?esc(String(r.cost))+' 元':r.costStatus==='not_applicable'?'不适用':'未知')+'</td></tr>').join('')+'</table><p>仅显示本人和公开位置成员的路线；多选交通方式时采用耗时最短的有效路线。地图费用为预计费用，驾车油费和停车费未知。</p>';
   }
@@ -1187,7 +1206,9 @@
       } else if (form.getAttribute('id') === 'requirements-form') {
         form.dataset.validationActive = 'true';
         if (!validateRequirements(form, true)) return;
-        if (await run('requirements', { origin: selectedOrigin, modes: data.getAll('modes'), preferences: data.getAll('preferences'), preferenceDetail: data.get('preferenceDetail'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+        const budgetMax = form.elements.budgetMax.valueAsNumber;
+        const budget = data.get('budgetMin') === '' ? { budget: budgetMax } : { budgetMin: form.elements.budgetMin.valueAsNumber, budgetMax };
+        if (await run('requirements', { origin: selectedOrigin, modes: data.getAll('modes'), preferences: data.getAll('preferences'), preferenceDetail: data.get('preferenceDetail'), ...budget, shared: data.has('shared') }, '出行需求已保存')) closeModal();
       } else if (form.getAttribute('id') === 'rename-form') {
         if (await run('rename', { name: data.get('name') }, '昵称已更新')) {
           sessionFor(active().id).name = self().name;
