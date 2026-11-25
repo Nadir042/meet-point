@@ -226,7 +226,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         const a = M.act(activity, memberId, 'requirements', {
           origin: input.origin, modes: input.modes, mode: input.mode,
           preferences: input.preferences, preference: input.preference, preferenceDetail: input.preferenceDetail,
-          budget: input.budget, shared: input.shared === true
+          budget: input.budget, budgetMin: input.budgetMin, budgetMax: input.budgetMax, shared: input.shared === true
         });
         update.run(JSON.stringify(a), id);
         return { activity: project(a, memberId) };

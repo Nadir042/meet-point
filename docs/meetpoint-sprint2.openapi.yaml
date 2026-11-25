@@ -1529,6 +1529,9 @@ components:
           - {type: object, nullable: true, enum: [null]}
         originReady: {type: boolean, description: 已填写有效出发地；对其他成员隐藏出发地时也可为 true}
         shared: {type: boolean}
+        budget: {type: number, minimum: 0, maximum: 5000, description: 兼容字段，与预算上限相同}
+        budgetMin: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算下限}
+        budgetMax: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算上限}
     Activity:
       type: object
       required: [id, status, paused, round, deadline, remainingMs, winningCandidateId, members, candidates, groups, requests,
@@ -1560,12 +1563,22 @@ components:
             activity: {$ref: '#/components/schemas/Activity'}
     RequirementsInput:
       type: object
-      required: [origin, mode, preference, budget, shared]
+      required: [origin, mode, preference, shared]
+      description: 人均地点消费预算，不含交通费；新区间要求下限不高于上限。未提供新区间时兼容旧 budget，按 0 至 budget 处理。
+      oneOf:
+      - required: [budgetMin, budgetMax]
+      - required: [budget]
+        not:
+          anyOf:
+          - required: [budgetMin]
+          - required: [budgetMax]
       properties:
         origin: {$ref: '#/components/schemas/Location'}
         mode: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}
         preference: {type: string, description: 按活动类型选择，取值见接口说明}
-        budget: {type: number, minimum: 0, description: 预算，单位人民币元}
+        budget: {type: number, minimum: 0, maximum: 5000, description: 兼容旧客户端的预算上限；新区间优先}
+        budgetMin: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算下限，人民币元，不得高于 budgetMax}
+        budgetMax: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算上限，人民币元}
         shared: {type: boolean, description: 是否向其他成员公开出发地}
       additionalProperties: false
     ErrorResponse:
