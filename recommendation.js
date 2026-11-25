@@ -6,6 +6,33 @@ const fail = (code, message, retryable = false) => Object.assign(new Error(messa
 const valid = p => p && Number.isFinite(p.lng) && Number.isFinite(p.lat) && Math.abs(p.lng) <= 180 && Math.abs(p.lat) <= 90;
 const distance = (a,b) => Math.hypot((a.lng-b.lng)*Math.cos(a.lat*Math.PI/180)*111320,(a.lat-b.lat)*111320);
 const score = n => Math.round(Math.max(0,Math.min(10,n))*10)/10;
+const venueCost = p => p.venueCostStatus==='known'&&Number.isFinite(p.venueCost)&&p.venueCost>=0?p.venueCost:null;
+const specificPreferences = activity => [...new Set(activity.members.flatMap(memberPreferences).filter(p=>p!=='不限'))];
+function budgetStatus(activity,p){
+  const cost=venueCost(p),budgets=activity.members.map(m=>m.budget).filter(n=>Number.isFinite(n)&&n>=0);
+  if(cost===null)return 'unknown';
+  if(budgets.some(b=>cost>b))return 'over';
+  return budgets.length===activity.members.length?'within':'unverified';
+}
+function candidateNotes(activity,p){
+  const cost=venueCost(p),matched=specificPreferences(activity).filter(preference=>matchesPreference(p,preference));
+  return [cost===null?'地点人均消费未知，无法确认是否符合预算':
+    `高德参考人均消费 ${cost} 元（不含交通费），${budgetStatus(activity,p)==='within'?'未超过各成员填写的预算':'部分成员预算未提供'}，实际消费以商家为准`,
+    ...(matched.length?[`类别或名称匹配偏好：${matched.join('、')}`]:[])];
+}
+// Reserve a nearest match for each preference before filling the ten route slots.
+function shortlist(places,preferences,center){
+  const sorted=[...places].sort((a,b)=>distance(a,center)-distance(b,center)||a.placeId.localeCompare(b.placeId));
+  const selected=new Set();
+  for(const preference of preferences){
+    if(selected.size>=10)break;
+    if([...selected].some(p=>matchesPreference(p,preference)))continue;
+    const match=sorted.find(p=>matchesPreference(p,preference));
+    if(match)selected.add(match);
+  }
+  for(const p of sorted){if(selected.size>=10)break;selected.add(p);}
+  return [...selected];
+}
 function rank(activity, places, round) {
   const pool = places.map(p => {
     const times = p.routes.map(r=>r.minutes), minMinutes=Math.min(...times), maxMinutes=Math.max(...times);
@@ -13,7 +40,7 @@ function rank(activity, places, round) {
     const matches=activity.members.map(m=> {const preferences=memberPreferences(m);return preferences.includes('不限')?(p.rating==null?null:score(p.rating*2)):preferences.some(preference=>matchesPreference(p,preference))?10:4;}).filter(Number.isFinite);
     const dimensions={fairness:score(10-gapMinutes/6),time:score(10-averageMinutes/9),preference:matches.length?score(matches.reduce((a,b)=>a+b,0)/matches.length):null,convenience:score(10-maxMinutes/9-Math.max(...p.routes.map(r=>r.transfers||0)))};
     const values=Object.values(dimensions).filter(Number.isFinite);
-    return {...p,id:`c_${round}_${p.placeId}`,round,average:Math.round(averageMinutes),gap:gapMinutes,area:p.address,subtitle:p.category,line:'高德路线',illustration:'building',x:50,y:50,routeSummary:{averageMinutes:Math.round(averageMinutes),minMinutes,maxMinutes,gapMinutes},dimensions,score:score(values.reduce((a,b)=>a+b,0)/values.length),reasons:[gapMinutes<=12?'全体成员预计出行时间较接近':'已综合比较全体成员的出行时间', ...(dimensions.preference>=8?['地点类别或名称较符合成员偏好']:[]),...(dimensions.convenience>=7?['整体出行较方便']:[]),'评分按可获取的有效维度等权计算']};
+    return {...p,venueCost:venueCost(p),venueCostStatus:venueCost(p)===null?'unknown':'known',budgetStatus:budgetStatus(activity,p),id:`c_${round}_${p.placeId}`,round,average:Math.round(averageMinutes),gap:gapMinutes,area:p.address,subtitle:p.category,line:'高德路线',illustration:'building',x:50,y:50,routeSummary:{averageMinutes:Math.round(averageMinutes),minMinutes,maxMinutes,gapMinutes},dimensions,score:score(values.reduce((a,b)=>a+b,0)/values.length),reasons:[gapMinutes<=12?'全体成员预计出行时间较接近':'已综合比较全体成员的出行时间', ...(dimensions.preference>=8?['地点类别或名称较符合成员偏好']:[]),...(dimensions.convenience>=7?['整体出行较方便']:[]),...candidateNotes(activity,p),'评分按可获取的有效维度等权计算']};
   }).sort((a,b)=>b.score-a.score||a.placeId.localeCompare(b.placeId));
   pool.forEach((p,i)=>p.overallRank=i+1);
   const groups=Object.fromEntries(['fairness','preference','convenience'].map(k=>[k,[...pool].sort((a,b)=>(b.dimensions[k]??-1)-(a.dimensions[k]??-1)||b.score-a.score||a.placeId.localeCompare(b.placeId)).slice(0,3).map(p=>p.id)]));
@@ -23,14 +50,22 @@ function rank(activity, places, round) {
 async function recommend(activity, provider) {
   if(activity.members.length<2||activity.members.length>10||!activity.members.every(m=>valid(m.origin))) throw fail('INSUFFICIENT_ORIGINS','需要 2—10 名成员提交有效出发地');
   const center={lng:activity.members.reduce((s,m)=>s+m.origin.lng,0)/activity.members.length,lat:activity.members.reduce((s,m)=>s+m.origin.lat,0)/activity.members.length};
-  const keywords=[...new Set(activity.members.flatMap(memberPreferences).filter(p=>p&&p!=='不限').flatMap(searchTerms))];
+  const preferences=specificPreferences(activity);
+  const keywords=[...new Set(preferences.flatMap(searchTerms))];
   const keyword=keywords.join('|')||policies[activity.type]?.keyword;
   let found=await provider.search(keyword,center),broadened=false;
   if(!found.some(p=>valid(p)&&suitable(p,activity.type))&&keyword!==policies[activity.type]?.keyword){found=await provider.search(policies[activity.type]?.keyword,center);broadened=true;}
   const unique=[];
   for(const p of found) if(valid(p)&&suitable(p,activity.type)&&!unique.some(q=>p.placeId&&q.placeId===p.placeId||p.name===q.name&&distance(p,q)<50)) unique.push({...p,placeId:p.placeId||'geo_'+createHash('sha256').update(p.name+'|'+p.lng.toFixed(5)+'|'+p.lat.toFixed(5)).digest('hex').slice(0,16)});
   if(!unique.length) throw fail('NO_CANDIDATES','没有搜索到适合的地点');
-  const selected=unique.sort((a,b)=>distance(a,center)-distance(b,center)).slice(0,10);
+  // Filter costs before expensive routes. Unknown is never treated as zero.
+  const affordable=unique.filter(p=>budgetStatus(activity,p)!=='over');
+  if(!affordable.length)throw fail('NO_CANDIDATES','已知消费的候选地点均超出成员预算，请调整预算或偏好');
+  const matched=affordable.filter(p=>preferences.some(preference=>matchesPreference(p,preference)));
+  const unrestricted=activity.members.some(m=>memberPreferences(m).includes('不限'));
+  const preferenceFallback=preferences.length>0&&!matched.length;
+  const pool=preferences.length&&!unrestricted&&matched.length?matched:affordable;
+  const selected=shortlist(pool,preferences,center);
   const jobs=selected.flatMap(p=>activity.members.flatMap(m=>memberModes(m).map(mode=>({p,m,mode})))), results=new Map(selected.map(p=>[p,new Map(activity.members.map(m=>[m.id,[]]))]));
   const routeCache=new Map();
   let cursor=0;
@@ -43,6 +78,9 @@ async function recommend(activity, provider) {
   if(!complete.length) throw fail('ROUTES_UNAVAILABLE','所有候选均有成员路线不可用',true);
   const result=rank(activity,complete,activity.round+1);
   if(broadened)result.warnings.push('偏好搜索无匹配，已按活动类型扩大搜索');
+  if(preferenceFallback)result.warnings.push('暂无名称或类别匹配所选偏好的预算可用地点，已返回同活动类型备选；不保证满足原偏好');
+  if(affordable.length<unique.length)result.warnings.push('已排除参考人均消费超出成员预算的地点（不含交通费）');
+  if(result.candidates.some(p=>p.budgetStatus==='unknown'))result.warnings.push('部分候选地点人均消费未知，请在确定地点前核实预算');
   if(complete.length<selected.length)result.warnings.push('部分地点路线不可用，已从本轮候选中排除');
   return result;
 }
