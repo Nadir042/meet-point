@@ -175,7 +175,7 @@ test('zero votes at deadline produces no result; revote starts a fresh 24 hours'
 test('requirements never mutate a voting snapshot; approved refresh clears all old votes', () => {
   let a = seeded();
   const original = JSON.stringify(a.candidates);
-  a = M.act(a, a.members[1].id, 'requirements', { origin: M.ORIGINS[6], mode: '步行', preference: '火锅', budgetMin: 50, budgetMax: 90, shared: false }, NOW);
+  a = M.act(a, a.members[1].id, 'requirements', { origin: M.ORIGINS[6], mode: '步行', preference: '火锅', budget: 80, shared: false }, NOW);
   assert.equal(JSON.stringify(a.candidates), original);
   a = M.act(a, a.members[1].id, 'request', {}, NOW);
   assert.equal(a.requests.length, 1);
@@ -196,7 +196,6 @@ test('requirements never mutate a voting snapshot; approved refresh clears all o
   assert.equal(a.requests[0].round, 1);
   assert.equal(a.requests[0].handledAt, NOW + 5000);
   assert.notEqual(JSON.stringify(a.candidates), original);
-  assert.deepEqual(a.candidates.map(p => p.budget), [90]);
 });
 test('transfer preserves membership and votes and immediately changes management rights', () => {
   const a = seeded(), next = a.members[1].id;

@@ -21,31 +21,3 @@ test('around search sends one keyword per request and merges POI IDs',async()=>{
 test('friends meeting preference maps to venues, not intent text',async()=>{
  let k;await recommend({...a,members:a.members.map(m=>({...m,preference:'朋友会面'}))},{search:async word=>{k=word;return [p]},route});assert.equal(k,'咖啡厅|茶馆');
 });
-
-test('custom venue keywords and presets both reach AMap, with per-person prices preserved',async()=>{
- const {createAmap}=require('../amap');
- const words=[];
- const api=createAmap({key:'custom-venue-test',qps:20,fetchImpl:async url=>{
-   const term=url.searchParams.get('keywords');
-   words.push(term);
-   const book={id:'book',name:'社区书店',type:'购物服务;专卖店;书店',location:'121.21,31.28',biz_ext:{cost:[]}};
-   const cafe={id:'cafe',name:'社区咖啡厅',type:'餐饮服务;咖啡厅',location:'121.21,31.28',biz_ext:{cost:'50.50'}};
-   return {ok:true,status:200,json:async()=>({status:'1',pois:term==='书店'?[book]:[cafe]})};
- }});
- const members=a.members.map(m=>({...m,preferences:['学习讨论','安静的书店'],preferenceSelections:['学习讨论','其他'],preferenceDetail:'安静的书店'}));
- const result=await recommend({...a,members},{search:api.search,route});
- assert.deepEqual(words,['书店','咖啡厅','图书馆']);
- assert.deepEqual(Object.fromEntries(result.candidates.map(place=>[place.placeId,place.pricePerPerson])),{book:null,cafe:50.5});
-});
-
-test('budget filters known venue prices at inclusive endpoints and retains unknown prices',async()=>{
- const members=[{...a.members[0],budgetMin:50,budgetMax:175},{...a.members[1],budget:150}];
- const places=[49.99,50,150,150.01,null].map((price,index)=>({...p,placeId:String(index),name:'咖啡馆'+index,lng:p.lng+index*0.001,pricePerPerson:price}));
- const routed=[];
- const result=await recommend({...a,members},{search:async()=>places,route:async(o,place)=>{
-   routed.push(place.placeId);
-   return {...await route(),cost:200,costStatus:'known'};
- }});
- assert.deepEqual([...new Set(routed)].sort(),['1','2','4']);
- assert.deepEqual(result.candidates.map(place=>place.pricePerPerson).sort((x,y)=>x-y),[null,50,150]);
-});

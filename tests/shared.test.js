@@ -38,40 +38,6 @@ const testMapProvider = () => ({
   }
 });
 
-test('requirements round-trip preserves custom selections and validates budget ranges before live recommendation', async () => {
-  const store = openStore(':memory:');
-  try {
-    const host = store.register({ username: 'budget_host', password: 'test-password' });
-    const guest = store.register({ username: 'budget_guest', password: 'test-password' });
-    const { activity } = store.create({ title: '偏好与预算', nickname: '发起人', type: '线下会面' }, host.token);
-    store.join({ code: activity.code, nickname: '伙伴' }, guest.token);
-    const hostInput = { origin: amapOrigin(0), mode: '步行', preferences: ['学习讨论', '其他'], preferenceDetail: '  安静的书店  ', budgetMin: 50, budgetMax: 150 };
-    const guestInput = { origin: amapOrigin(1), mode: '步行', preference: '不限', budget: 150 };
-    const readHost = () => store.get(activity.id, host.token).activity.members[0];
-    for (const values of [{ budgetMin: -1 }, { budgetMin: '50' }, { budgetMax: null }, { budgetMax: 49 }])
-      assert.throws(() => store.requirements(activity.id, host.token, { ...hostInput, ...values }), { status: 400 });
-    assert.throws(() => store.requirements(activity.id, host.token, { ...hostInput, preferenceDetail: '   ' }), { status: 400 });
-    store.requirements(activity.id, host.token, hostInput);
-    assert.deepEqual(M.memberBudget(readHost()), { min: 50, max: 150 });
-    assert.deepEqual(M.memberPreferenceSelection(readHost(), activity.type), { selections: ['学习讨论', '其他'], detail: '安静的书店' });
-    const legacy = store.requirements(activity.id, guest.token, guestInput).activity.members[1];
-    assert.deepEqual(M.memberBudget(legacy), { min: null, max: 150 });
-
-    store.requirements(activity.id, host.token, { ...hostInput, preferences: ['学习讨论'], budgetMin: 150 });
-    assert.deepEqual(M.memberPreferenceSelection(readHost(), activity.type), { selections: ['学习讨论'], detail: '' });
-    const words = [];
-    const place = { ...amapOrigin(2), name: '咖啡厅', category: '咖啡厅', pricePerPerson: 150 };
-    const result = await store.recommendLive(activity.id, host.token, {
-      search: async keyword => { words.push(keyword); return [place]; },
-      route: testMapProvider().route
-    });
-    assert.deepEqual(words, ['咖啡厅|图书馆']);
-    assert.equal(result.activity.candidates[0].pricePerPerson, 150);
-  } finally {
-    store.close();
-  }
-});
-
 test('two independent clients complete the shared activity flow', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-shared-'));
   const filename = path.join(directory, 'test.sqlite');

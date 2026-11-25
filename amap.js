@@ -1,8 +1,26 @@
 'use strict';
 const {fail}=require('./recommendation');
-const number=v=>v!==null&&v!==undefined&&v!==''&&!Array.isArray(v)&&Number.isFinite(Number(v))?Number(v):null;
+const number=v=>(typeof v==='number'||typeof v==='string'&&v.trim()!=='')&&Number.isFinite(Number(v))?Number(v):null;
 const queues=new Map();
-function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch,qps=Number(process.env.AMAP_QPS)||2}={}){
+function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch,qps=Number(process.env.AMAP_QPS)||2,
+  searchTtlMs=60000,routeTtlMs=30000,cacheMaxEntries=256,now=Date.now}={}){
+  // Cache only successful provider data, never accounts, activities or member routes.
+  // In-flight requests are not shared: aborting one activity must not cancel another.
+  const cache=new Map();
+  async function cached(kind,params,ttl,signal,load){
+    signal?.throwIfAborted();
+    const at=now(),id=JSON.stringify([kind,params]);
+    for(const [k,entry] of cache)if(entry.expiresAt<=at)cache.delete(k);
+    const hit=cache.get(id);
+    if(hit){cache.delete(id);cache.set(id,hit);return structuredClone(hit.value);}
+    const value=await load();
+    signal?.throwIfAborted();
+    if(ttl>0&&cacheMaxEntries>0){
+      cache.set(id,{value:structuredClone(value),expiresAt:now()+ttl});
+      while(cache.size>cacheMaxEntries)cache.delete(cache.keys().next().value);
+    }
+    return value;
+  }
   const interval=Math.ceil(1000/Math.max(0.1,Math.min(20,qps)))+20;
   async function pace(path,signal){
     const id=key+'|'+path;
@@ -49,13 +67,25 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch,qps=Number(process
   return {
     async search(keyword,center,city='上海',signal){
       const terms=[...new Set(String(keyword||'').split('|').map(s=>s.trim()).filter(Boolean))].slice(0,12);
+      const batches=new Array(terms.length);
+      let cursor=0;
+      await Promise.all(Array.from({length:Math.min(3,terms.length)},async()=>{
+        while(cursor<terms.length){
+          const index=cursor++,term=terms[index],path=center?'v3/place/around':'v3/place/text';
+          const params={keywords:term,city,offset:'20',extensions:'all',...(center?{location:`${center.lng.toFixed(6)},${center.lat.toFixed(6)}`,radius:'20000'}:{citylimit:'true'})};
+          batches[index]=await cached(path,params,searchTtlMs,signal,async()=>{
+            const body=await request(path,params,signal);
+            return (body.pois||[]).map(p=>{
+              const rawCost=number(p.biz_ext?.cost),venueCost=rawCost!==null&&rawCost>=0?rawCost:null;
+              return {...location(p),rating:number(p.biz_ext?.rating),venueCost,
+                venueCostStatus:venueCost===null?'unknown':'known',venueCostSource:venueCost===null?null:'amap.biz_ext.cost'};
+            });
+          });
+        }
+      }));
       const results=[],seen=new Set();
-      for(const term of terms){
-        const body=await request(center?'v3/place/around':'v3/place/text',{keywords:term,city,offset:'20',extensions:'all',...(center?{location:`${center.lng.toFixed(6)},${center.lat.toFixed(6)}`,radius:'20000'}:{citylimit:'true'})},signal);
-        for(const p of body.pois||[]){
-          const rawPrice=p.biz_ext?.cost;
-          const price=typeof rawPrice==='number'||(typeof rawPrice==='string'&&rawPrice.trim())?number(rawPrice):null;
-          const item={...location(p),rating:number(p.biz_ext?.rating),pricePerPerson:price!==null&&price>=0?price:null};
+      for(const batch of batches){
+        for(const item of batch){
           const id=item.placeId||[item.name,item.lng,item.lat].join('|');
           if(!seen.has(id)){seen.add(id);results.push(item);}
         }
@@ -66,13 +96,16 @@ function createAmap({key=process.env.AMAP_KEY,fetchImpl=fetch,qps=Number(process
     async route(origin,destination,mode,signal){
       const paths={'公共交通':'v3/direction/transit/integrated','驾车':'v3/direction/driving','步行':'v3/direction/walking','骑行':'v4/direction/bicycling'};
       if(!paths[mode])throw fail('MAP_PROVIDER_ERROR','交通方式无效');
-      const b=await request(paths[mode],{origin:`${origin.lng.toFixed(6)},${origin.lat.toFixed(6)}`,destination:`${destination.lng.toFixed(6)},${destination.lat.toFixed(6)}`,city:origin.city||'上海',cityd:destination.city||'上海',extensions:'all'},signal);
+      const params={origin:`${origin.lng.toFixed(6)},${origin.lat.toFixed(6)}`,destination:`${destination.lng.toFixed(6)},${destination.lat.toFixed(6)}`,city:origin.city||'上海',cityd:destination.city||'上海',extensions:'all'};
+      return cached(paths[mode],params,routeTtlMs,signal,async()=>{
+      const b=await request(paths[mode],params,signal);
       const r=mode==='公共交通'?b.route?.transits?.[0]:(b.route||b.data)?.paths?.[0];
       if(!r||number(r.duration)===null||number(r.distance)===null)throw fail('ROUTES_UNAVAILABLE','路线不可用',true);
       const rawCost=mode==='公共交通'?number(r.cost):null;
       const cost=rawCost!==null&&rawCost>=0?rawCost:null;
       if(Number(r.duration)<0||Number(r.distance)<0)throw fail('ROUTES_UNAVAILABLE','路线数据无效',true);
       return {costSource:cost!==null?'amap.transit.cost':null,minutes:Math.ceil(Number(r.duration)/60),distanceMeters:Number(r.distance),cost,costStatus:mode==='公共交通'?(cost===null?'unavailable':'known'):mode==='驾车'?'unknown':'not_applicable',transfers:Math.max(0,(r.segments||[]).filter(s=>s.bus?.buslines?.length).length-1)};
+      });
     },
     async staticMap(points,{width=640,height=350}={},signal){
       if(!key)throw fail('MAP_PROVIDER_ERROR','请配置后端 AMAP_KEY');
