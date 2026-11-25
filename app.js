@@ -820,15 +820,14 @@
     const budgetRange = m.origin ? M.memberBudget(m) : null;
     const preferenceOptions = M.OPTIONS[a.type];
     const selectedModes = M.memberModes(m);
-    const storedPreferences = M.memberPreferences(m);
-    const customPreference = storedPreferences.find(preference => !preferenceOptions.includes(preference)) || '';
-    const selectedPreferences = [...storedPreferences.filter(preference => preferenceOptions.includes(preference)), ...(customPreference ? ['其他'] : [])];
+    const { selections: selectedPreferences, detail: customPreference } = M.memberPreferenceSelection(m, a.type);
+    const customSelected = selectedPreferences.includes('其他');
     const choice = (name, value, checked) => `<label class="multi-choice-option"><input type="checkbox" name="${name}" value="${esc(value)}" ${checked ? 'checked' : ''}><span>${esc(value)}</span></label>`;
     openModal('我的出行需求', `<p class="modal-intro">先告诉我们你从哪里出发。具体位置是否向伙伴公开，由你决定。</p><form id="requirements-form" novalidate>
       <label class="requirement-field" data-requirement-field="origin"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>出发地</span><input id="origin-keyword" value="${esc(m.origin?.name || "")}" placeholder="例如：人民广场"><small class="field-error" role="alert"></small></label><div class="origin-actions"><button type="button" class="button light" id="search-origin">搜索地点</button><button type="button" class="button light" id="use-current-location">${icon('pin')} 使用当前位置</button></div><section class="origin-search-results" aria-label="搜索结果"><p id="origin-search-status" role="status" aria-live="polite">搜索地点，或在你同意后使用设备当前位置。</p><div id="origin-result" class="origin-result-list"></div></section><p id="origin-selected" class="origin-selected" role="status">${m.origin ? `已选择：${esc(m.origin.name)} · ${esc(m.origin.address?.trim() || "暂无详细地址")}` : "尚未选择出发地"}</p>
       <fieldset class="requirement-field requirement-choice-field" data-requirement-field="mode"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>交通方式 <small>可多选，推荐时采用耗时最短路线</small></legend><div class="multi-choice-grid">${M.MODES.map(mode => choice('modes', mode, selectedModes.includes(mode))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
       <fieldset class="requirement-field requirement-choice-field" data-requirement-field="preference"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>活动偏好 <small>可多选；“不限”不能和其他选项同时选择</small></legend><div class="multi-choice-grid preference-choice-grid">${preferenceOptions.map(preference => choice('preferences', preference, selectedPreferences.includes(preference))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
-      <label class="requirement-field" data-requirement-field="preferenceDetail" ${selectedPreferences.includes('其他') ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="请填写具体偏好（20 个字以内）"><small class="field-error" role="alert"></small></label>
+      <label class="requirement-field" data-requirement-field="preferenceDetail" ${customSelected ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="例如书店、咖啡厅" aria-describedby="preference-detail-help preference-detail-error" ${customSelected ? 'required' : 'disabled'}><small id="preference-detail-help" class="panel-tip">填写想去的场所。系统按地点关键词搜索，暂不支持排除条件。</small><small id="preference-detail-error" class="field-error" role="alert"></small></label>
       <div class="requirement-field" data-requirement-field="budget" role="group" aria-labelledby="budget-label"><span id="budget-label" class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>人均消费预算（元，不含交通费）</span><div class="budget-range-inputs"><input name="budgetMin" type="number" min="0" max="5000" step="0.01" value="${budgetRange?.min ?? ''}" placeholder="下限" aria-label="预算下限" aria-describedby="budget-error" required><span aria-hidden="true">－</span><input name="budgetMax" type="number" min="0" max="5000" step="0.01" value="${budgetRange?.max ?? ''}" placeholder="上限" aria-label="预算上限" aria-describedby="budget-error" required></div><small id="budget-error" class="field-error" role="alert"></small></div>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
@@ -901,7 +900,7 @@
       origin: selectedOrigin ? '' : '请选择并确认出发地',
       mode: modes.length > 0 && modes.every(mode => M.MODES.includes(mode)) ? '' : '请至少选择一种交通方式',
       preference: preferences.length > 0 && preferences.every(preference => M.OPTIONS[active().type].includes(preference)) && (!preferences.includes('不限') || preferences.length === 1) ? '' : '请选择活动偏好；“不限”不能和其他选项同时选择',
-      preferenceDetail: !preferences.includes('其他') || (detail && detail.length <= 20) ? '' : '请填写 1—20 个字的其他偏好',
+      preferenceDetail: preferences.includes('其他') ? M.customPreferenceError(detail) : '',
       budget: budgetMin === '' || budgetMax === '' ? '请填写预算下限和上限' : M.budgetRangeError(Number(budgetMin), Number(budgetMax))
     };
   }
@@ -948,7 +947,10 @@
       if (event.target.value !== '不限' && event.target.checked && unlimited) unlimited.checked = false;
       const custom = form.querySelector('[data-requirement-field="preferenceDetail"]');
       custom.hidden = !form.querySelector('input[name="preferences"][value="其他"]')?.checked;
-      if (custom.hidden) custom.querySelector('input').value = '';
+      const detail = form.elements.preferenceDetail;
+      detail.disabled = custom.hidden;
+      detail.required = !custom.hidden;
+      if (custom.hidden) detail.value = '';
     }
     if (form.dataset.validationActive === 'true') validateRequirements(form);
   });

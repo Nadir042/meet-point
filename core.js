@@ -63,7 +63,29 @@
   }
   function memberPreferences(member) {
     const values = Array.isArray(member?.preferences) ? member.preferences : [member?.preference];
-    return [...new Set(values.map(oldPreference).filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
+    const preferences = Array.isArray(member?.preferenceSelections) ? values : values.map(oldPreference);
+    return [...new Set(preferences.filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
+  }
+  function memberPreferenceSelection(member, type) {
+    if (Array.isArray(member.preferenceSelections)) {
+      const selections = member.preferenceSelections;
+      return { selections, detail: selections.includes('其他') ? member.preferenceDetail || '' : '' };
+    }
+    const options = OPTIONS[type] || [];
+    const values = memberPreferences(member);
+    const selections = values.filter(value => options.includes(value) && value !== '其他');
+    const detail = values.find(value => !options.includes(value)) || '';
+    if (detail) selections.push('其他');
+    return { selections, detail };
+  }
+  function customPreferenceError(value) {
+    const detail = typeof value === 'string' ? value.trim() : '';
+    if (!detail || detail.length > 20) return '请填写 1—20 个字的场所名称或类别';
+    if (/不(?:要|想|去|考虑|接受|喜欢|含|选)|别(?:去|选|找)|避免|排除|除了|除外/u.test(detail))
+      return '请填写想去的场所，暂不支持排除条件';
+    if (['其他', '不限'].includes(detail) || !/[\p{L}\p{N}]/u.test(detail))
+      return '请填写想去的场所，例如书店、咖啡厅';
+    return '';
   }
   function budgetRangeError(min, max) {
     if (!Number.isFinite(min) || !Number.isFinite(max)) return '请填写有效的预算下限和上限';
@@ -362,8 +384,12 @@
           assert(modes.length > 0 && modes.every(mode => MODES.includes(mode)), '请选择交通方式');
           assert(selectedPreferences.length > 0 && selectedPreferences.every(preference => OPTIONS[a.type].includes(preference)), '请选择适用的活动偏好');
           assert(!selectedPreferences.includes('不限') || selectedPreferences.length === 1, '不限不能与其他活动偏好同时选择');
-          const detail = String(data.preferenceDetail || '').trim();
-          if (selectedPreferences.includes('其他')) assert(detail && detail.length <= 20, '其他偏好应填写 1—20 个字');
+          const customSelected = selectedPreferences.includes('其他');
+          if (customSelected) {
+            const error = customPreferenceError(data.preferenceDetail);
+            assert(!error, '其他偏好：' + error, 'INVALID_REQUEST', 400);
+          }
+          const detail = customSelected ? data.preferenceDetail.trim() : '';
           const preferences = selectedPreferences.map(preference => preference === '其他' ? detail : preference);
           const hasRange = data.budgetMin !== undefined || data.budgetMax !== undefined;
           const budgetMin = hasRange ? data.budgetMin : 0;
@@ -371,6 +397,8 @@
           const budgetError = budgetRangeError(budgetMin, budgetMax);
           assert(!budgetError, budgetError, 'INVALID_BUDGET', 400);
           Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), modes, preferences, mode: modes[0], preference: preferences[0], budgetMin, budgetMax, budget: budgetMax, shared: !!data.shared });
+          actor.preferenceSelections = selectedPreferences;
+          actor.preferenceDetail = detail;
           break;
         }
         case 'recommend': {
@@ -473,7 +501,7 @@
       return a;
     });
   }
-  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, MODES, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, activityDetailView, memberModes, memberPreferences, memberBudget, budgetRangeError, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
+  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, MODES, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, activityDetailView, memberModes, memberPreferences, memberPreferenceSelection, customPreferenceError, memberBudget, budgetRangeError, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MeetPoint = api;
 })(typeof window !== 'undefined' ? window : globalThis);
