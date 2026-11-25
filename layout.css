@@ -467,6 +467,9 @@ input::placeholder,textarea::placeholder{color:#918a87;font-size:15px}
 .origin-result-item small{color:var(--green-dark)}
 .origin-selected{padding:12px 14px;border-radius:12px;background:var(--surface-soft);color:var(--ink);font-size:13px;line-height:1.6}
 .field-label{display:flex;align-items:center;gap:7px}
+.budget-range-inputs{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);align-items:center;gap:12px;margin-top:8px}
+.budget-range-inputs>span{color:var(--muted)}
+[data-requirement-field="budget"]>.field-error{margin-top:8px}
 .requirement-choice-field{min-width:0;margin:0;padding:0;border:0}
 .requirement-choice-field legend{width:100%;margin-bottom:10px;color:var(--ink);font-size:14px;font-weight:650}
 .requirement-choice-field legend small{margin-left:auto;color:var(--muted);font-size:12px;font-weight:400}

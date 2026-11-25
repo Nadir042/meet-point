@@ -65,6 +65,19 @@
     const values = Array.isArray(member?.preferences) ? member.preferences : [member?.preference];
     return [...new Set(values.map(oldPreference).filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
   }
+  function budgetRangeError(min, max) {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) return '请填写有效的预算下限和上限';
+    if (min < 0) return '预算下限不能低于 0 元';
+    if (max < 0 || min > 5000 || max > 5000) return '预算上下限应在 0—5000 元之间';
+    if (min > max) return '预算下限不能高于上限';
+    return '';
+  }
+  function memberBudget(member) {
+    const hasRange = member?.budgetMin !== undefined || member?.budgetMax !== undefined;
+    const min = hasRange ? member.budgetMin : 0;
+    const max = hasRange ? member.budgetMax : member?.budget;
+    return budgetRangeError(min, max) ? null : { min, max };
+  }
   function member(name, originIndex = null, mode = '公共交通', preference = '不限', budget = 150, shared = false) {
     return { id: uid(), name, origin: originIndex === null ? null : clone(ORIGINS[originIndex]), modes: [mode], preferences: [preference], mode, preference, budget, shared };
   }
@@ -100,7 +113,7 @@
     return a.members.length >= 2 && a.members.length <= 10 && a.members.every(m =>
       m.origin && Number.isFinite(m.origin.lng) && Number.isFinite(m.origin.lat) &&
       memberModes(m).length > 0 && memberPreferences(m).length > 0 &&
-      Number.isFinite(m.budget) && m.budget >= 0);
+      memberBudget(m) !== null);
   }
   function activityDetailView(a) {
     const requirementsReady = typeof a.requirementsReady === 'boolean' ? a.requirementsReady : ready(a);
@@ -171,6 +184,8 @@
       if (!m.preferences.length) m.preferences = ['不限'];
       m.mode = m.modes[0];
       m.preference = m.preferences[0];
+      const range = memberBudget(m);
+      if (range) Object.assign(m, { budgetMin: range.min, budgetMax: range.max, budget: range.max });
     });
     a.date ||= dateKey(a.createdAt);
     a.time ||= '18:30';
@@ -350,8 +365,12 @@
           const detail = String(data.preferenceDetail || '').trim();
           if (selectedPreferences.includes('其他')) assert(detail && detail.length <= 20, '其他偏好应填写 1—20 个字');
           const preferences = selectedPreferences.map(preference => preference === '其他' ? detail : preference);
-          assert(Number.isFinite(data.budget) && data.budget >= 0 && data.budget <= 5000, '预算应在 0—5000 元之间');
-          Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), modes, preferences, mode: modes[0], preference: preferences[0], budget: data.budget, shared: !!data.shared });
+          const hasRange = data.budgetMin !== undefined || data.budgetMax !== undefined;
+          const budgetMin = hasRange ? data.budgetMin : 0;
+          const budgetMax = hasRange ? data.budgetMax : data.budget;
+          const budgetError = budgetRangeError(budgetMin, budgetMax);
+          assert(!budgetError, budgetError, 'INVALID_BUDGET', 400);
+          Object.assign(actor, { origin: clone({ ...origin, name: origin.name.trim() }), modes, preferences, mode: modes[0], preference: preferences[0], budgetMin, budgetMax, budget: budgetMax, shared: !!data.shared });
           break;
         }
         case 'recommend': {
@@ -454,7 +473,7 @@
       return a;
     });
   }
-  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, MODES, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, activityDetailView, memberModes, memberPreferences, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
+  const api = { DAY, GROUPS, ORIGINS, POIS, OPTIONS, MODES, dateKey, validDate, migrate, access, groupCandidates, createActivity, ready, activityDetailView, memberModes, memberPreferences, memberBudget, budgetRangeError, recommendationProgress, navigationUrl, recommend, tally, voteStatus, tick, act, visibleMembers, seed, seedMemories, uid };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MeetPoint = api;
 })(typeof window !== 'undefined' ? window : globalThis);

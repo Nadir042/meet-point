@@ -493,7 +493,7 @@
         <p class="group-reason">${group === 'fairness' ? `最长与最短出行相差 ${p.gap} 分钟` : group === 'preference' ? `偏好匹配 ${formatScore(p.dimensions.preference)} / 10 分` : `便利度 ${formatScore(p.dimensions.convenience)} / 10 · 平均 ${p.average} 分钟`}</p><div class="transit-tag">${icon('train')}${esc(p.line)}</div>
         <details class="poi-details"><summary>评分依据与成员路线比较</summary>${scoreDetails(p)}</details>
         <div class="vote-row"><span><strong>${count}</strong> 票支持</span><button class="button ${vote === p.id || winner ? 'primary' : 'vote-button'}" data-action="vote" data-value="${p.id}" ${a.status !== 'voting' || a.paused || !canAccess() || a.deadline <= Date.now() ? 'disabled' : ''}>${vote === p.id || winner ? icon('check') : ''}${winner ? '最终集合点' : vote === p.id ? '我已投票' : vote ? '改投这里' : '投票给这里'}</button></div>
-        <p class="poi-vote-status">${a.paused ? '活动已暂停，暂不可投票或改票' : a.status === 'voting' ? a.deadline <= Date.now() ? '本轮投票已截止，正在更新结果' : vote === p.id ? '这是你当前的选择，截止前可以改票' : '三组推荐共用每人一票，截止前可以改票' : statusText(a)} · 预计费用：未知</p>
+        <p class="poi-vote-status">${a.paused ? '活动已暂停，暂不可投票或改票' : a.status === 'voting' ? a.deadline <= Date.now() ? '本轮投票已截止，正在更新结果' : vote === p.id ? '这是你当前的选择，截止前可以改票' : '三组推荐共用每人一票，截止前可以改票' : statusText(a)} · 参考人均消费：${p.venueCostStatus === 'known' && Number.isFinite(p.venueCost) ? `${p.venueCost} 元（不含交通费）` : '未知，需核实预算'}</p>
         <button class="button light full candidate-navigation" data-action="navigate">${icon('navigation')} ${winner ? '在高德地图中打开路线' : '在高德地图查看此地点'}</button>
       </div></article>`;
   }
@@ -638,7 +638,7 @@
     const a = active();
     const members = M.visibleMembers(a, viewer());
     return `${activityHeader()}<section class="panel members-page"><div class="panel-heading"><h3>每个人的出行偏好</h3><button class="button primary" data-action="requirements" ${terminal(a) || a.paused ? 'disabled' : ''}>编辑我的需求</button></div>
-      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>预算上限</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(M.memberModes(m).join('、'))}</td><td>${esc(M.memberPreferences(m).join('、'))}</td><td>¥${m.budget}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
+      <div class="member-table-wrap"><table><thead><tr><th>成员</th><th>出发地</th><th>交通方式</th><th>个人偏好</th><th>人均预算区间</th><th>状态</th></tr></thead><tbody>${members.map((m, i) => `<tr><td><div class="inline">${avatar(m, i, true)}<strong>${esc(m.name)}</strong>${m.id === a.hostId ? '<span class="host-tag">发起者</span>' : ''}</div></td><td>${m.origin ? esc(m.origin.name) : a.members[i].ready || a.members[i].origin ? '已隐藏' : '待填写'}</td><td>${esc(M.memberModes(m).join('、'))}</td><td>${esc(M.memberPreferences(m).join('、'))}</td><td>${M.memberBudget(m) ? `¥${M.memberBudget(m).min}－${M.memberBudget(m).max}` : '待填写'}</td><td><span class="status">${a.members[i].ready || a.members[i].origin ? '需求已就绪' : '待完善'}</span></td></tr>`).join('')}</tbody></table></div>
       <div class="notice">${icon('lock')} 具体出发地只对本人或经本人授权的其他成员展示。此 Demo 的身份切换仅用于演示。</div>
       <div class="inline activity-member-actions">${isHost() ? `<button class="button light" data-action="invite">邀请伙伴</button><button class="text-button" data-action="manage">管理活动</button>` : ''}<button class="text-button danger" data-action="leave">退出活动</button></div></section>`;
   }
@@ -817,6 +817,7 @@
     selectedOrigin = self()?.origin || null;
     const a = active(), m = self();
     if (!m) return toast('请先加入活动');
+    const budgetRange = m.origin ? M.memberBudget(m) : null;
     const preferenceOptions = M.OPTIONS[a.type];
     const selectedModes = M.memberModes(m);
     const storedPreferences = M.memberPreferences(m);
@@ -828,7 +829,7 @@
       <fieldset class="requirement-field requirement-choice-field" data-requirement-field="mode"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>交通方式 <small>可多选，推荐时采用耗时最短路线</small></legend><div class="multi-choice-grid">${M.MODES.map(mode => choice('modes', mode, selectedModes.includes(mode))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
       <fieldset class="requirement-field requirement-choice-field" data-requirement-field="preference"><legend class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>活动偏好 <small>可多选；“不限”不能和其他选项同时选择</small></legend><div class="multi-choice-grid preference-choice-grid">${preferenceOptions.map(preference => choice('preferences', preference, selectedPreferences.includes(preference))).join('')}</div><small class="field-error" role="alert"></small></fieldset>
       <label class="requirement-field" data-requirement-field="preferenceDetail" ${selectedPreferences.includes('其他') ? '' : 'hidden'}><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>其他偏好</span><input name="preferenceDetail" maxlength="20" value="${esc(customPreference)}" placeholder="请填写具体偏好（20 个字以内）"><small class="field-error" role="alert"></small></label>
-      <label class="requirement-field" data-requirement-field="budget"><span class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>人均预算上限（元）</span><input name="budget" type="number" min="0" max="5000" value="${m.budget}" required><small class="field-error" role="alert"></small></label>
+      <div class="requirement-field" data-requirement-field="budget" role="group" aria-labelledby="budget-label"><span id="budget-label" class="field-label"><span class="field-alert-mark" aria-hidden="true">!</span>人均消费预算（元，不含交通费）</span><div class="budget-range-inputs"><input name="budgetMin" type="number" min="0" max="5000" step="0.01" value="${budgetRange?.min ?? ''}" placeholder="下限" aria-label="预算下限" aria-describedby="budget-error" required><span aria-hidden="true">－</span><input name="budgetMax" type="number" min="0" max="5000" step="0.01" value="${budgetRange?.max ?? ''}" placeholder="上限" aria-label="预算上限" aria-describedby="budget-error" required></div><small id="budget-error" class="field-error" role="alert"></small></div>
       <label class="checkbox-label"><input name="shared" type="checkbox" ${m.shared ? 'checked' : ''}><span>向其他成员公开我的具体出发地<small>关闭后，位置仍用于推荐计算，但不会在其他人的页面中显示。</small></span></label>
       ${a.status === 'voting' ? '<div class="notice">本轮候选保持不变。修改需求后，可申请重新推荐。</div>' : ''}
       <button type="submit" class="button primary full">保存我的需求 ${icon('check')}</button></form>`);
@@ -895,13 +896,13 @@
     const modes = [...form.querySelectorAll('input[name="modes"]:checked')].map(input => input.value);
     const preferences = [...form.querySelectorAll('input[name="preferences"]:checked')].map(input => input.value);
     const detail = form.elements.preferenceDetail.value.trim();
-    const budget = form.elements.budget.value.trim();
+    const budgetMin = form.elements.budgetMin.value.trim(), budgetMax = form.elements.budgetMax.value.trim();
     return {
       origin: selectedOrigin ? '' : '请选择并确认出发地',
       mode: modes.length > 0 && modes.every(mode => M.MODES.includes(mode)) ? '' : '请至少选择一种交通方式',
       preference: preferences.length > 0 && preferences.every(preference => M.OPTIONS[active().type].includes(preference)) && (!preferences.includes('不限') || preferences.length === 1) ? '' : '请选择活动偏好；“不限”不能和其他选项同时选择',
       preferenceDetail: !preferences.includes('其他') || (detail && detail.length <= 20) ? '' : '请填写 1—20 个字的其他偏好',
-      budget: budget !== '' && Number.isFinite(Number(budget)) && Number(budget) >= 0 && Number(budget) <= 5000 ? '' : '预算应在 0—5000 元之间'
+      budget: budgetMin === '' || budgetMax === '' ? '请填写预算下限和上限' : M.budgetRangeError(Number(budgetMin), Number(budgetMax))
     };
   }
   function setRequirementError(form, name, message, animate = false) {
@@ -1187,7 +1188,7 @@
       } else if (form.getAttribute('id') === 'requirements-form') {
         form.dataset.validationActive = 'true';
         if (!validateRequirements(form, true)) return;
-        if (await run('requirements', { origin: selectedOrigin, modes: data.getAll('modes'), preferences: data.getAll('preferences'), preferenceDetail: data.get('preferenceDetail'), budget: Number(data.get('budget')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
+        if (await run('requirements', { origin: selectedOrigin, modes: data.getAll('modes'), preferences: data.getAll('preferences'), preferenceDetail: data.get('preferenceDetail'), budgetMin: Number(data.get('budgetMin')), budgetMax: Number(data.get('budgetMax')), shared: data.has('shared') }, '出行需求已保存')) closeModal();
       } else if (form.getAttribute('id') === 'rename-form') {
         if (await run('rename', { name: data.get('name') }, '昵称已更新')) {
           sessionFor(active().id).name = self().name;
