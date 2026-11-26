@@ -149,7 +149,7 @@ test('two independent clients complete the shared activity flow', async () => {
     const feeling = await request(`/api/activities/${id}/actions`, 'POST', { action: 'feeling', data: { text: '很期待见面' } }, joined.body.token);
     assert.equal(feeling.body.activity.journal.feelings[0].text, '很期待见面');
     const photoId = crypto.randomUUID();
-    const uploaded = await request(`/api/activities/${id}/photos`, 'POST', { id: photoId, name: '一起.png', mime: 'image/png', base64: 'iVBORw0KGgo=' }, joined.body.token);
+    const uploaded = await request(`/api/activities/${id}/photos`, 'POST', { id: photoId, name: '一起.png', mime: 'image/png', base64: fs.readFileSync(path.join(__dirname, '..', 'assets', 'workspace-graduate.png')).toString('base64') }, joined.body.token);
     assert.equal(uploaded.status, 201);
     assert.equal(uploaded.body.activity.journal.photos[0].id, photoId);
     const fakePhoto = await request(`/api/activities/${id}/photos`, 'POST', { id: crypto.randomUUID(), name: '伪装.png', mime: 'image/png', base64: Buffer.from('not an image').toString('base64') }, joined.body.token);

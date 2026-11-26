@@ -18,7 +18,7 @@ The server will validate the decoded bytes according to the declared MIME type:
 
 - PNG: require the PNG signature, a valid first `IHDR` chunk, at least one `IDAT` chunk, and a zero-length `IEND` chunk that ends the file. Every chunk length must stay within the buffer.
 - JPEG: require the SOI marker, at least one standard start-of-frame marker (`C0`–`C3`, `C5`–`C7`, `C9`–`CB`, or `CD`–`CF`), a start-of-scan marker whose segment fits in the buffer, and an EOI marker after scan data. Marker segments must not extend beyond the buffer.
-- WebP: require the `RIFF` and `WEBP` identifiers, require the RIFF size to match the complete payload, and require a bounded `VP8 `, `VP8L`, or `VP8X` image chunk.
+- WebP: require the `RIFF` and `WEBP` identifiers, require the RIFF size to match the complete payload, and require a bounded `VP8 ` or `VP8L` image chunk, or an extended `VP8X` container with a bounded animation frame.
 
 These checks establish structural completeness for the reported format without adding a full image decoder. They are intended to reject truncated uploads and MIME disguises, not to verify every pixel or metadata field.
 
