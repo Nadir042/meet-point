@@ -206,9 +206,10 @@ paths:
       description: |-
         只接受已从高德搜索或逆地理编码确认的地点。旧活动的 originIndex 需要重新选点。
 
-        - 聚餐：不限、火锅、烧烤、中餐、西餐、咖啡甜品。
-        - 休闲娱乐：不限、KTV、桌游、电影院、公园、商场、剧本杀、密室逃脱、美甲、手工、写真、拼豆。
-        - 线下会面：不限、学习讨论、工作交流、朋友会面、安静场所、交通便利。
+        - 聚餐：不限、火锅、烧烤、中餐、西餐、咖啡甜品、其他。
+        - 休闲娱乐：不限、KTV、桌游、电影院、公园、商场、剧本杀、密室逃脱、美甲、手工、写真、其他。
+        - 线下会面：不限、学习讨论、工作交流、朋友会面、逛街、其他。
+        - 不限须单独选择。选择其他时，提交想去的场所词（例如书店、咖啡厅）作为 preferenceDetail。推荐按地点关键词搜索，提交排除条件时返回 400。
       parameters:
       - {$ref: '#/components/parameters/ActivityId'}
       requestBody:
@@ -1528,7 +1529,12 @@ components:
           - {$ref: '#/components/schemas/Location'}
           - {type: object, nullable: true, enum: [null]}
         originReady: {type: boolean, description: 已填写有效出发地；对其他成员隐藏出发地时也可为 true}
+        preferenceSelections: {type: array, items: {type: string}, description: 表单选项，包括勾选的其他选项}
+        preferenceDetail: {type: string, description: 保存的其他偏好文本，取消选择后为空字符串}
         shared: {type: boolean}
+        budget: {type: number, minimum: 0, maximum: 5000, description: 兼容字段，与预算上限相同}
+        budgetMin: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算下限}
+        budgetMax: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算上限}
     Activity:
       type: object
       required: [id, status, paused, round, deadline, remainingMs, winningCandidateId, members, candidates, groups, requests,
@@ -1560,12 +1566,32 @@ components:
             activity: {$ref: '#/components/schemas/Activity'}
     RequirementsInput:
       type: object
-      required: [origin, mode, preference, budget, shared]
+      required: [origin]
+      allOf:
+      - anyOf:
+        - required: [modes]
+        - required: [mode]
+      - anyOf:
+        - required: [preferences]
+        - required: [preference]
+      description: 人均地点消费预算，不含交通费；新区间要求下限不高于上限。未提供新区间时兼容旧 budget，按 0 至 budget 处理。
+      oneOf:
+      - required: [budgetMin, budgetMax]
+      - required: [budget]
+        not:
+          anyOf:
+          - required: [budgetMin]
+          - required: [budgetMax]
       properties:
         origin: {$ref: '#/components/schemas/Location'}
+        modes: {type: array, minItems: 1, items: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}}
         mode: {type: string, enum: [公共交通, 驾车, 步行, 骑行]}
+        preferences: {type: array, minItems: 1, items: {type: string}, description: 按活动类型选择，可包含其他}
         preference: {type: string, description: 按活动类型选择，取值见接口说明}
-        budget: {type: number, minimum: 0, description: 预算，单位人民币元}
+        preferenceDetail: {type: string, nullable: true, maxLength: 20, description: 选择其他时必填，请输入想去的场所}
+        budget: {type: number, minimum: 0, maximum: 5000, description: 兼容旧客户端的预算上限；新区间优先}
+        budgetMin: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算下限，人民币元，不得高于 budgetMax}
+        budgetMax: {type: number, minimum: 0, maximum: 5000, description: 人均消费预算上限，人民币元}
         shared: {type: boolean, description: 是否向其他成员公开出发地}
       additionalProperties: false
     ErrorResponse:

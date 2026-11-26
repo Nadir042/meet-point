@@ -36,7 +36,7 @@ test('demo account replacement is idempotent and refuses to overwrite an ordinar
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'meetpoint-demo-data-'));
   const store = openStore(path.join(directory, 'test.sqlite'));
   try {
-    const input = { marker: DEMO_MARKER, username: DEMO_USERNAME, password: DEMO_PASSWORD, entries: buildDemoActivities(NOW) };
+    const input = { marker: DEMO_MARKER, username: DEMO_USERNAME, password: DEMO_PASSWORD, entries: buildDemoActivities(Date.now()) };
     assert.equal(store.replaceDemoAccount(input).activities, 8);
     assert.equal(store.replaceDemoAccount(input).activities, 8);
     const session = store.login({ username: DEMO_USERNAME, password: DEMO_PASSWORD });

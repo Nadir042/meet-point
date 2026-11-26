@@ -2,6 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const { openStore } = require('../shared-store');
 
 test('管理员精确查询、停用和恢复账号，原活动保留且所有旧会话失效', t => {
@@ -45,7 +47,8 @@ test('管理员只能巡查目标账号参与的活动及目标账号发布的�
   store.act(activity.id, partner, { action: 'comment', data: { text: '其他成员留言' } });
   const upload = (token, name) => {
     const id = randomUUID();
-    store.uploadPhoto(activity.id, token, { id, name, mime: 'image/png', base64: 'iVBORw0KGgo=' });
+    const base64 = fs.readFileSync(path.join(__dirname, '..', 'assets', 'workspace-graduate.png')).toString('base64');
+    store.uploadPhoto(activity.id, token, { id, name, mime: 'image/png', base64 });
     return id;
   };
   const targetPhoto = upload(target, '目标照片');

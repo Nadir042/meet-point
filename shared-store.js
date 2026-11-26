@@ -8,6 +8,86 @@ const M = require('./core');
 const digest = token => createHash('sha256').update(token).digest('hex');
 const fail = (status, message) => { const error = new Error(message); error.status = status; throw error; };
 const codePattern = /^[A-Z0-9]{6}$/;
+const jpegFrames = new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
+
+function validPng(bytes) {
+  if (bytes.length < 45 || !bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) return false;
+  let offset = 8, first = true, hasData = false;
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset), type = bytes.toString('ascii', offset + 4, offset + 8);
+    const end = offset + 12 + length;
+    if (end > bytes.length || (first && (type !== 'IHDR' || length !== 13))) return false;
+    if (type === 'IHDR' && (!first || length !== 13 || !bytes.readUInt32BE(offset + 8) || !bytes.readUInt32BE(offset + 12))) return false;
+    if (type === 'IDAT') hasData = hasData || length > 0;
+    if (type === 'IEND') return length === 0 && hasData && end === bytes.length;
+    first = false;
+    offset = end;
+  }
+  return false;
+}
+
+function validJpeg(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
+  let offset = 2, inScan = false, hasFrame = false, hasScan = false;
+  while (offset < bytes.length) {
+    let marker;
+    if (inScan) {
+      do { if (bytes[offset++] !== 0xff) continue; while (bytes[offset] === 0xff) offset++; marker = bytes[offset++]; } while (offset <= bytes.length && (marker === undefined || marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7)));
+    } else {
+      if (bytes[offset++] !== 0xff) return false;
+      while (bytes[offset] === 0xff) offset++;
+      marker = bytes[offset++];
+    }
+    if (marker === undefined) return false;
+    if (marker === 0xd9) return hasFrame && hasScan && offset === bytes.length;
+    if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) continue;
+    inScan = false;
+    if (offset + 2 > bytes.length) return false;
+    const length = bytes.readUInt16BE(offset), end = offset + length;
+    if (length < 2 || end > bytes.length) return false;
+    if (jpegFrames.has(marker)) {
+      if (length < 8 || !bytes.readUInt16BE(offset + 3) || !bytes.readUInt16BE(offset + 5)) return false;
+      hasFrame = true;
+    }
+    if (marker === 0xda) {
+      if (length < 6) return false;
+      hasScan = true;
+      inScan = true;
+    }
+    offset = end;
+  }
+  return false;
+}
+
+function validWebp(bytes) {
+  if (bytes.length < 20 || bytes.toString('ascii', 0, 4) !== 'RIFF' || bytes.toString('ascii', 8, 12) !== 'WEBP' || bytes.readUInt32LE(4) !== bytes.length - 8) return false;
+  let offset = 12, extended = false, hasImage = false;
+  const imageChunk = (type, data, length) =>
+    (type === 'VP8 ' && length >= 10 && bytes[data + 3] === 0x9d && bytes[data + 4] === 0x01 && bytes[data + 5] === 0x2a) ||
+    (type === 'VP8L' && length >= 5 && bytes[data] === 0x2f);
+  const animationFrame = (start, end) => {
+    let frameOffset = start + 16, found = false;
+    while (frameOffset + 8 <= end) {
+      const type = bytes.toString('ascii', frameOffset, frameOffset + 4), length = bytes.readUInt32LE(frameOffset + 4);
+      const data = frameOffset + 8, chunkEnd = data + length, paddedEnd = chunkEnd + (length % 2);
+      if (paddedEnd > end) return false;
+      found = found || imageChunk(type, data, length);
+      frameOffset = paddedEnd;
+    }
+    return frameOffset === end && found;
+  };
+  while (offset + 8 <= bytes.length) {
+    const type = bytes.toString('ascii', offset, offset + 4), length = bytes.readUInt32LE(offset + 4);
+    const data = offset + 8, end = data + length, paddedEnd = end + (length % 2);
+    if (paddedEnd > bytes.length) return false;
+    if (type === 'VP8X') { if (length !== 10) return false; extended = true; }
+    hasImage = hasImage || imageChunk(type, data, length) || (type === 'ANMF' && extended && length >= 16 && animationFrame(data, end));
+    offset = paddedEnd;
+  }
+  return offset === bytes.length && hasImage;
+}
+
+const validPhotoContent = (mime, bytes) => ({ 'image/png': validPng, 'image/jpeg': validJpeg, 'image/webp': validWebp })[mime]?.(bytes) === true;
 
 function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, 'data', 'meetpoint.sqlite')) {
   fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -325,7 +405,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         const a = M.act(activity, memberId, 'requirements', {
           origin: input.origin, modes: input.modes, mode: input.mode,
           preferences: input.preferences, preference: input.preference, preferenceDetail: input.preferenceDetail,
-          budget: input.budget, shared: input.shared === true
+          budget: input.budget, budgetMin: input.budgetMin, budgetMax: input.budgetMax, shared: input.shared === true
         });
         update.run(JSON.stringify(a), id);
         return { activity: project(a, memberId) };
@@ -384,12 +464,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
           !/^[A-Za-z0-9+/]+={0,2}$/.test(input.base64)) fail(400, '照片格式无效');
       const bytes = Buffer.from(input.base64, 'base64');
       if (!bytes.length || bytes.length > 8 * 1024 * 1024) fail(400, '照片不能超过 8 MB');
-      const signatures = {
-        'image/png': bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])),
-        'image/jpeg': bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff,
-        'image/webp': bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
-      };
-      if (!signatures[input.mime]) fail(400, '照片内容与文件类型不一致');
+      if (!validPhotoContent(input.mime, bytes)) fail(400, '照片内容不完整或与文件类型不一致');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
         const a = M.act(activity, memberId, 'photos', { photos: [{ id: input.id, name: input.name }] });
