@@ -1042,7 +1042,7 @@
       }
       const a = active(), belongs = visibleActivities().some(item => item.id === a.id);
       const renameActivity = belongs && isShared(a) ? `<details class="identity-activity"><summary>修改本活动昵称</summary><form id="rename-form" class="identity-form"><label>本活动昵称<input name="name" maxlength="16" required value="${esc(self().name)}"></label><button type="submit" class="button light">保存活动昵称</button></form></details>` : '';
-      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}${accountAuth?.admin ? '<button class="button light" data-action="admin-accounts">账号管理</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
+      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}${accountAuth?.admin ? '<button class="button light" data-action="admin-accounts">账号管理</button><button class="button light" data-action="admin-feedback">反馈管理</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
       const guestSettings = `<p class="identity-current">当前游客 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p><form id="profile-name-form" class="identity-form"><label>默认昵称<input name="name" maxlength="16" required value="${currentProfile().name === '游客' ? '' : esc(currentProfile().name)}"></label><button class="button light" type="submit">保存默认昵称</button></form><p class="identity-help">新活动会预填默认昵称，已有活动昵称不变。</p>${renameActivity}${localIdentityChoices()}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="new-profile">新建游客身份</button><button class="text-button" data-action="merge-profile">合并旧身份</button><button class="text-button" data-action="account-login">注册／登录</button></div>`;
       openModal(isAccount() ? '我的账号' : '游客身份与设置', `<div class="identity-settings">${isAccount() ? accountSettings : guestSettings}</div>`);
     },
@@ -1062,6 +1062,11 @@
     'account-login': () => openAccount('login'),
     'account-register': () => openAccount('register'),
     'admin-accounts': () => showAccountManagement(),
+    'admin-feedback': async () => {
+      const result = await api('/api/admin/feedback', 'GET', undefined, accountAuth.token);
+      const items = result.items.map(item => `<article class="feedback-item"><div class="inline"><strong>${esc(item.username)} · ${esc(item.category)}</strong><span class="status">${esc(item.status)}</span></div><p>${esc(item.content)}</p><small>${new Date(item.createdAt).toLocaleString('zh-CN')}</small></article>`).join('');
+      openModal('用户反馈', items || '<p>暂无用户反馈。</p>', true);
+    },
     'admin-review-photo': async (url, button) => {
       button.disabled = true;
       try {
