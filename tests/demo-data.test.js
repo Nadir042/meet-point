@@ -8,7 +8,7 @@ const M = require('../core');
 const { openStore } = require('../shared-store');
 const { DEMO_MARKER, DEMO_USERNAME, DEMO_PASSWORD, buildDemoActivities } = require('../demo-data');
 
-const NOW = Date.parse('2026-11-13T12:00:00+08:00');
+const NOW = Date.now();
 
 test('full demo data covers workflow states, recommendation groups and every built-in POI', () => {
   const entries = buildDemoActivities(NOW);

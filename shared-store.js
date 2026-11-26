@@ -109,8 +109,19 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, salt TEXT NOT NULL, password_hash TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS administrators (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS disabled_accounts (
+      account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE
+    );
     CREATE TABLE IF NOT EXISTS account_sessions (
       token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, expires_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS feedback (
+      id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+      category TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT '待处理'
     );
     CREATE TABLE IF NOT EXISTS account_memberships (
       account_id TEXT NOT NULL, activity_id TEXT NOT NULL, member_id TEXT NOT NULL,
@@ -143,6 +154,17 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     if (!session || session.expires_at <= Date.now()) fail(401, '账号登录已过期，请重新登录');
     return session.account_id;
   };
+  const isAdmin = id => !!db.prepare('SELECT 1 FROM administrators WHERE account_id = ?').get(id);
+  const isDisabled = id => !!db.prepare('SELECT 1 FROM disabled_accounts WHERE account_id = ?').get(id);
+  const requireAdmin = token => {
+    if (!isAdmin(accountFor(token))) fail(403, '需要系统管理员权限');
+  };
+  const targetAccount = username => {
+    const target = typeof username === 'string' && findAccount.get(username.trim());
+    if (!target) fail(404, '未找到该账号');
+    return target;
+  };
+  const accountStatus = target => ({ username: target.username, disabled: isDisabled(target.id), admin: isAdmin(target.id) });
   const issueAccountToken = accountId => {
     const token = randomBytes(32).toString('base64url');
     db.prepare('INSERT INTO account_sessions VALUES (?, ?, ?)').run(digest(token), accountId, Date.now() + 7 * M.DAY);
@@ -221,12 +243,89 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       if (!account) fail(401, '账号或密码不正确');
       const supplied = scryptSync(password, account.salt, 64);
       if (!timingSafeEqual(supplied, Buffer.from(account.password_hash, 'hex'))) fail(401, '账号或密码不正确');
-      return { account: { id: account.id, username }, token: issueAccountToken(account.id) };
+      return withWrite(() => {
+        if (isDisabled(account.id)) fail(403, '账号已停用');
+        return { account: { id: account.id, username, admin: isAdmin(account.id) }, token: issueAccountToken(account.id) };
+      });
     },
     account(token) {
       const id = accountFor(token);
       const row = db.prepare('SELECT id, username FROM accounts WHERE id = ?').get(id);
-      return { account: row };
+      return { account: { ...row, admin: isAdmin(id) } };
+    },
+    grantAdmin(username) {
+      return withWrite(() => {
+        const target = targetAccount(username);
+        if (isDisabled(target.id)) fail(409, '请先恢复该账号');
+        db.prepare('INSERT OR IGNORE INTO administrators VALUES (?)').run(target.id);
+      });
+    },
+    submitFeedback(token, input) {
+      const accountId = accountFor(token);
+      const categories = ['功能建议', '体验问题', '推荐结果', '其他反馈'];
+      const category = input?.category;
+      const content = typeof input?.content === 'string' ? input.content.trim() : '';
+      if (!categories.includes(category) || !content || content.length > 1000)
+        fail(400, '请选择反馈类型并填写 1—1000 字内容');
+      const item = { id: randomUUID(), category, content, createdAt: Date.now(), status: '待处理' };
+      db.prepare('INSERT INTO feedback VALUES (?, ?, ?, ?, ?, ?)').run(item.id, accountId, category, content, item.createdAt, item.status);
+      return item;
+    },
+    listMyFeedback(token) {
+      const accountId = accountFor(token);
+      return { items: db.prepare('SELECT id, category, content, created_at AS createdAt, status FROM feedback WHERE account_id = ? ORDER BY created_at DESC, id DESC').all(accountId) };
+    },
+    listAdminFeedback(token) {
+      requireAdmin(token);
+      return { items: db.prepare('SELECT f.id, a.username, f.category, f.content, f.created_at AS createdAt, f.status FROM feedback f JOIN accounts a ON a.id = f.account_id ORDER BY f.created_at DESC, f.id DESC').all() };
+    },
+    lookupAccount(token, username) {
+      requireAdmin(token);
+      return accountStatus(targetAccount(username));
+    },
+    reviewAccountActivities(token, username) {
+      requireAdmin(token);
+      const target = targetAccount(username);
+      return { activities: accountActivities.all(target.id).map(row => {
+        const activity = M.tick(JSON.parse(row.payload));
+        const { id, title, date, time, type, status, paused, journal } = activity;
+        const member = activity.members.find(item => item.id === row.member_id);
+        const byTarget = entry => entry.memberId === row.member_id;
+        return {
+          id, title, date, time, type, status, paused, nickname: member?.name,
+          feelings: journal.feelings.filter(byTarget).map(({ text }) => ({ text })),
+          comments: journal.comments.filter(byTarget).map(({ text }) => ({ text })),
+          photos: journal.photos.filter(byTarget).map(({ id, name }) => ({ id, name }))
+        };
+      }) };
+    },
+    reviewAccountPhoto(token, username, activityId, photoId) {
+      requireAdmin(token);
+      const target = targetAccount(username);
+      const membership = findAccountMember.get(target.id, activityId);
+      const stored = membership && findById.get(activityId);
+      if (!stored) fail(404, '活动不存在');
+      const activity = M.migrate(JSON.parse(stored.payload));
+      if (!activity.journal.photos.some(photo => photo.id === photoId && photo.memberId === membership.member_id))
+        fail(404, '照片不存在');
+      const row = findPhoto.get(photoId, activityId);
+      if (!row) fail(404, '照片文件不存在');
+      return row;
+    },
+    setAccountDisabled(token, username, disabled) {
+      return withWrite(() => {
+        requireAdmin(token);
+        const target = targetAccount(username);
+        if (isAdmin(target.id)) fail(403, '只能管理普通账号');
+        if (typeof disabled !== 'boolean') fail(400, '账号状态无效');
+        if (disabled) {
+          db.prepare('INSERT OR IGNORE INTO disabled_accounts VALUES (?)').run(target.id);
+          db.prepare('DELETE FROM account_sessions WHERE account_id = ?').run(target.id);
+        } else {
+          db.prepare('DELETE FROM disabled_accounts WHERE account_id = ?').run(target.id);
+        }
+        return accountStatus(target);
+      });
     },
     logout(token) {
       accountFor(token);

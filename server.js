@@ -44,6 +44,30 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
         if(!rawLng?.trim()||!rawLat?.trim()||!require('./recommendation').valid({lng,lat})){const error=Error('坐标无效');error.status=400;throw error;}
         return sendSuccess(res,200,await mapProvider.reverse(lng,lat));
       }
+      if (name === 'api/feedback' && req.method === 'POST') return sendJson(res, 201, store.submitFeedback(token, await bodyJson(req)));
+      if (name === 'api/feedback' && req.method === 'GET') return sendJson(res, 200, store.listMyFeedback(token));
+      if (name === 'api/admin/feedback' && req.method === 'GET') return sendJson(res, 200, store.listAdminFeedback(token));
+      if (name === 'api/admin/account/activities' && req.method === 'GET') {
+        const username = new URL(req.url, 'http://localhost').searchParams.get('username');
+        return sendJson(res, 200, store.reviewAccountActivities(token, username));
+      }
+      const reviewPhoto = /^api[/]admin[/]account[/]activities[/]([0-9a-f-]{36})[/]photos[/]([0-9a-f-]{36})$/.exec(name);
+      if (reviewPhoto && req.method === 'GET') {
+        const username = new URL(req.url, 'http://localhost').searchParams.get('username');
+        const record = store.reviewAccountPhoto(token, username, reviewPhoto[1], reviewPhoto[2]);
+        res.writeHead(200, { 'Content-Type': record.mime, 'Content-Length': record.data.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(record.data);
+      }
+      if (name === 'api/admin/account') {
+        if (req.method === 'GET') {
+          const username = new URL(req.url, 'http://localhost').searchParams.get('username');
+          return sendJson(res, 200, store.lookupAccount(token, username));
+        }
+        if (req.method === 'PATCH') {
+          const input = await bodyJson(req);
+          return sendJson(res, 200, store.setAccountDisabled(token, input?.username, input?.disabled));
+        }
+      }
       if (name === 'api/account/register' && req.method === 'POST') return sendJson(res, 201, store.register(await bodyJson(req)));
       if (name === 'api/account/login' && req.method === 'POST') return sendJson(res, 200, store.login(await bodyJson(req)));
       if (name === 'api/account' && req.method === 'GET') return sendJson(res, 200, store.account(token));
