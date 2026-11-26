@@ -121,6 +121,7 @@
   let poiTrigger = null;
   let staticMapState = { key: null, url: null, error: null, loading: false, controller: null };
   let menuOpen = false;
+  let accountFeedback = [];
   let focusBeforeModal = null;
   let toastTimer;
   let pageAlertTimer;
@@ -148,6 +149,7 @@
         if (profiles.activeId === profileId) acceptShared({ activity });
       }
       saveProfiles();
+      accountFeedback = (await api('/api/feedback', 'GET', undefined, accountAuth.token)).items;
       return [];
     }
     return Promise.allSettled(Object.entries(sharedSessions).filter(([, session]) => session.profileId === profileId).map(async ([key, session]) => {
@@ -644,10 +646,10 @@
   }
   function feedbackPage() {
     ensureDemoFeedback();
-    const mine = state.feedback.filter(f => isAccount() ? f.accountId === accountAuth.id : f.memberId === viewer());
+    const mine = isAccount() ? accountFeedback : state.feedback.filter(f => f.memberId === viewer());
     return `<div class="page-heading feedback-heading"><div><div class="eyebrow">BETTER, WITH YOU</div><h1>听听你的建议<span class="heading-dot">.</span></h1><p>告诉我们你的想法，或记录演示中遇到的问题。</p></div><figure class="feedback-heading-art"><img src="./assets/feedback-idea.png" alt="手绘灯泡点亮新想法"></figure></div>
-      <div class="feedback-layout"><section class="panel"><h2>留下你的建议</h2><form id="feedback-form"><label>反馈类型<select name="category"><option>功能建议</option><option>体验问题</option><option>推荐结果</option><option>其他反馈</option></select></label><label>反馈内容<textarea name="content" rows="6" maxlength="1000" required placeholder="你希望 MeetPoint 可以做得更好的地方……"></textarea></label><p class="panel-tip">演示反馈只保存在当前浏览器，不会发送给团队。真实管理员处理流程待后端接入。</p><button class="button primary" type="submit">保存反馈 ${icon('arrow')}</button></form></section>
-      <section class="panel"><h2>我的反馈 <span class="count-badge">${mine.length}</span></h2>${mine.length ? mine.map(f => `<article class="feedback-item"><div class="inline"><strong>${esc(f.category)}</strong><span class="status">本地已记录</span></div><p>${esc(f.content)}</p><small>${new Date(f.at).toLocaleString('zh-CN')}</small></article>`).join('') : '<div class="empty-state compact"><p>还没有反馈记录。<br>你的想法，会让下一次见面更好。</p></div>'}</section></div>`;
+      <div class="feedback-layout"><section class="panel"><h2>留下你的建议</h2><form id="feedback-form"><label>反馈类型<select name="category"><option>功能建议</option><option>体验问题</option><option>推荐结果</option><option>其他反馈</option></select></label><label>反馈内容<textarea name="content" rows="6" maxlength="1000" required placeholder="你希望 MeetPoint 可以做得更好的地方……"></textarea></label><p class="panel-tip">登录后提交的反馈会保存到服务器。</p><button class="button primary" type="submit">提交反馈 ${icon('arrow')}</button></form></section>
+      <section class="panel"><h2>我的反馈 <span class="count-badge">${mine.length}</span></h2>${mine.length ? mine.map(f => `<article class="feedback-item"><div class="inline"><strong>${esc(f.category)}</strong><span class="status">${esc(f.status || '本地已记录')}</span></div><p>${esc(f.content)}</p><small>${new Date(f.createdAt || f.at).toLocaleString('zh-CN')}</small></article>`).join('') : '<div class="empty-state compact"><p>还没有反馈记录。<br>你的想法，会让下一次见面更好。</p></div>'}</section></div>`;
   }
   function ensureDemoFeedback() {
     if (accountAuth?.username !== FULL_DEMO_USERNAME || state.feedback.some(item => item.demoSeed === FULL_DEMO_MARKER && item.accountId === accountAuth.id)) return;
@@ -1040,7 +1042,7 @@
       }
       const a = active(), belongs = visibleActivities().some(item => item.id === a.id);
       const renameActivity = belongs && isShared(a) ? `<details class="identity-activity"><summary>修改本活动昵称</summary><form id="rename-form" class="identity-form"><label>本活动昵称<input name="name" maxlength="16" required value="${esc(self().name)}"></label><button type="submit" class="button light">保存活动昵称</button></form></details>` : '';
-      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}${accountAuth?.admin ? '<button class="button light" data-action="admin-accounts">账号管理</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
+      const accountSettings = `<p class="identity-current">账号 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p>${renameActivity}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="sample-journal">查看示例手账</button>${accountAuth?.previousProfileId && Object.values(sharedSessions).some(s => s.profileId === accountAuth.previousProfileId) ? '<button class="button light" data-action="claim-guest">归入游客活动</button>' : ''}${accountAuth?.admin ? '<button class="button light" data-action="admin-accounts">账号管理</button><button class="button light" data-action="admin-feedback">反馈管理</button>' : ''}<button class="text-button" data-action="account-logout">退出登录</button></div>`;
       const guestSettings = `<p class="identity-current">当前游客 <strong>${esc(currentProfile().name)}</strong>${belongs ? `<span>本活动昵称：${esc(self().name)}</span>` : ''}</p><form id="profile-name-form" class="identity-form"><label>默认昵称<input name="name" maxlength="16" required value="${currentProfile().name === '游客' ? '' : esc(currentProfile().name)}"></label><button class="button light" type="submit">保存默认昵称</button></form><p class="identity-help">新活动会预填默认昵称，已有活动昵称不变。</p>${renameActivity}${localIdentityChoices()}<div class="identity-actions"><button class="button light" data-action="edit-avatar">修改头像</button><button class="button light" data-action="new-profile">新建游客身份</button><button class="text-button" data-action="merge-profile">合并旧身份</button><button class="text-button" data-action="account-login">注册／登录</button></div>`;
       openModal(isAccount() ? '我的账号' : '游客身份与设置', `<div class="identity-settings">${isAccount() ? accountSettings : guestSettings}</div>`);
     },
@@ -1060,6 +1062,11 @@
     'account-login': () => openAccount('login'),
     'account-register': () => openAccount('register'),
     'admin-accounts': () => showAccountManagement(),
+    'admin-feedback': async () => {
+      const result = await api('/api/admin/feedback', 'GET', undefined, accountAuth.token);
+      const items = result.items.map(item => `<article class="feedback-item"><div class="inline"><strong>${esc(item.username)} · ${esc(item.category)}</strong><span class="status">${esc(item.status)}</span></div><p>${esc(item.content)}</p><small>${new Date(item.createdAt).toLocaleString('zh-CN')}</small></article>`).join('');
+      openModal('用户反馈', items || '<p>暂无用户反馈。</p>', true);
+    },
     'admin-review-photo': async (url, button) => {
       button.disabled = true;
       try {
@@ -1175,7 +1182,7 @@
     } catch (error) { toast(error.message); }
   });
   function showAccountManagement(target) {
-    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p><form id="admin-activities-form"><input type="hidden" name="username" value="${esc(target.username)}"><button class="button light" type="submit">查看活动与手账</button></form>` : '';
+    const result = target ? `<p>账号 <strong>${esc(target.username)}</strong> · ${target.disabled ? '已停用' : '正常'}</p>${target.admin ? '<p>系统管理员账号</p>' : `<form id="admin-status-form"><input type="hidden" name="username" value="${esc(target.username)}"><input type="hidden" name="disabled" value="${!target.disabled}"><button class="button light" type="submit">${target.disabled ? '恢复' : '停用'}此账号</button></form>`}<form id="admin-activities-form"><input type="hidden" name="username" value="${esc(target.username)}"><button class="button light" type="submit">查看活动与手账</button></form>` : '';
     openModal('账号管理', `<form id="admin-query-form"><label>完整登录账号名<input name="username" required maxlength="30"></label><button class="button primary" type="submit">查询账号</button></form>${result}`);
   }
 
@@ -1211,6 +1218,10 @@
         const username = data.get('username');
         const result = await api('/api/admin/account/activities?username=' + encodeURIComponent(username), 'GET', undefined, accountAuth.token);
         if (form.isConnected && $('#modal').open) showAccountActivities(username, result.activities);
+        return;
+      }
+      if (form.id === 'admin-status-form') {
+        showAccountManagement(await api('/api/admin/account', 'PATCH', { username: data.get('username'), disabled: data.get('disabled') === 'true' }, accountAuth.token));
         return;
       }
       if (form.getAttribute('id') === 'request-form') {
@@ -1304,8 +1315,11 @@
       } else if (form.getAttribute('id') === 'feedback-form') {
         const content = data.get('content').trim();
         if (!content) throw new Error('请填写反馈内容');
-        state.feedback.unshift({ id: M.uid(), memberId: viewer(), accountId: isAccount() ? accountAuth.id : null, category: data.get('category'), content: content.slice(0, 1000), at: Date.now() });
-        save(); render(); toast('反馈已保存在本浏览器');
+        const item = await api('/api/feedback', 'POST', { category: data.get('category'), content }, accountAuth.token);
+        accountFeedback.unshift(item);
+        form.reset();
+        render();
+        toast('反馈已提交');
       }
     } catch (error) {
       if (['account-login-form', 'account-register-form'].includes(form.getAttribute('id'))) {
