@@ -432,6 +432,13 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       requireAdmin(token);
       return { items: db.prepare('SELECT f.id, a.username, f.category, f.content, f.created_at AS createdAt, f.status FROM feedback f JOIN accounts a ON a.id = f.account_id ORDER BY f.created_at DESC, f.id DESC').all() };
     },
+    updateFeedbackStatus(token, id, status) {
+      requireAdmin(token);
+      if (status !== '已处理') fail(400, '反馈只能标记为已处理');
+      const saved = db.prepare('UPDATE feedback SET status = ? WHERE id = ? RETURNING id, status').get(status, id);
+      if (!saved) fail(404, '未找到该条反馈');
+      return saved;
+    },
     lookupAccount(token, username) {
       requireAdmin(token);
       return accountStatus(targetAccount(username));

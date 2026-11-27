@@ -1067,8 +1067,26 @@
     'admin-accounts': () => showAccountManagement(),
     'admin-feedback': async () => {
       const result = await api('/api/admin/feedback', 'GET', undefined, accountAuth.token);
-      const items = result.items.map(item => `<article class="feedback-item"><div class="inline"><strong>${esc(item.username)} · ${esc(item.category)}</strong><span class="status">${esc(item.status)}</span></div><p>${esc(item.content)}</p><small>${new Date(item.createdAt).toLocaleString('zh-CN')}</small></article>`).join('');
+      const items = result.items.map(item => {
+        const action = item.status === '待处理'
+          ? `<button class="button light" data-action="resolve-feedback" data-value="${esc(item.id)}">标为已处理</button>`
+          : '';
+        return `<article class="feedback-item"><div class="inline"><strong>${esc(item.username)} · ${esc(item.category)}</strong><span class="status" aria-live="polite">${esc(item.status)}</span></div><p>${esc(item.content)}</p><div class="inline"><small>${new Date(item.createdAt).toLocaleString('zh-CN')}</small>${action}</div></article>`;
+      }).join('');
       openModal('用户反馈', items || '<p>暂无用户反馈。</p>', true);
+    },
+    'resolve-feedback': async (id, button) => {
+      const item = button.closest('.feedback-item');
+      button.disabled = true;
+      try {
+        const saved = await api(`/api/admin/feedback/${encodeURIComponent(id)}`, 'PATCH', { status: '已处理' }, accountAuth.token);
+        if (!button.isConnected || !$('#modal').open) return;
+        item.querySelector('.status').textContent = saved.status;
+        button.remove();
+      } catch (error) {
+        button.disabled = false;
+        if (button.isConnected && $('#modal').open) toast(`反馈状态保存失败：${error.message}`);
+      }
     },
     'admin-review-photo': async (url, button) => {
       button.disabled = true;

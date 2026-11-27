@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createServer } = require('../server');
 const { openStore } = require('../shared-store');
 
 test('管理员精确查询、停用和恢复账号，原活动保留且所有旧会话失效', t => {
@@ -84,4 +85,50 @@ test('反馈由服务端保存，只有管理员可查看全部用户的反馈',
   assert.throws(() => store.listAdminFeedback(member.token), { status: 403 });
   assert.deepEqual(store.listAdminFeedback(admin.token).items.map(item => item.username), ['member']);
   assert.throws(() => store.submitFeedback(member.token, { category: '功能建议', content: 'x'.repeat(1001) }), { status: 400 });
+});
+
+test('管理员更新反馈后，只有对应提交人能在我的反馈看到新状态', async t => {
+  const store = openStore(':memory:');
+  const server = createServer(store, {});
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve));
+    store.close();
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = (path, token, method = 'GET', body) => fetch(base + path, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(body ? { 'Content-Type': 'application/json' } : {})
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const password = 'password123';
+  const admin = store.register({ username: 'admin', password }).token;
+  const author = store.register({ username: 'author', password }).token;
+  const other = store.register({ username: 'other', password }).token;
+  store.grantAdmin('admin');
+  store.create({ title: '聚会', nickname: '发起人' }, author);
+
+  const submitted = await request('/api/feedback', author, 'POST', { category: '功能建议', content: '希望增加提醒' });
+  assert.equal(submitted.status, 201);
+  const { id } = await submitted.json();
+  const url = `/api/admin/feedback/${id}`;
+  const resolved = { status: '已处理' };
+
+  assert.equal((await request(url, null, 'PATCH', resolved)).status, 401);
+  assert.equal((await request(url, author, 'PATCH', resolved)).status, 403);
+  assert.equal((await request(url, admin, 'PATCH', { status: '未知状态' })).status, 400);
+  assert.equal((await request(`/api/admin/feedback/${randomUUID()}`, admin, 'PATCH', resolved)).status, 404);
+  assert.equal((await (await request('/api/feedback', author)).json()).items[0].status, '待处理');
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await request(url, admin, 'PATCH', resolved);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { id, ...resolved });
+  }
+  assert.equal((await (await request('/api/admin/feedback', admin)).json()).items[0].status, '已处理');
+  assert.equal((await (await request('/api/feedback', author)).json()).items[0].status, '已处理');
+  assert.deepEqual((await (await request('/api/feedback', other)).json()).items, []);
 });

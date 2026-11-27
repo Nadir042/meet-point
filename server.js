@@ -47,6 +47,11 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
       if (name === 'api/feedback' && req.method === 'POST') return sendJson(res, 201, store.submitFeedback(token, await bodyJson(req)));
       if (name === 'api/feedback' && req.method === 'GET') return sendJson(res, 200, store.listMyFeedback(token));
       if (name === 'api/admin/feedback' && req.method === 'GET') return sendJson(res, 200, store.listAdminFeedback(token));
+      const feedback = /^api[/]admin[/]feedback[/]([0-9a-f-]{36})$/.exec(name);
+      if (feedback && req.method === 'PATCH') {
+        const input = await bodyJson(req);
+        return sendJson(res, 200, store.updateFeedbackStatus(token, feedback[1], input?.status));
+      }
       if (name === 'api/admin/account/activities' && req.method === 'GET') {
         const username = new URL(req.url, 'http://localhost').searchParams.get('username');
         return sendJson(res, 200, store.reviewAccountActivities(token, username));
