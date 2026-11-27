@@ -30,8 +30,8 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
   catch { return sendJson(res, 400, { error: '无效地址' }); }
   if (name.startsWith('api/')) {
     try {
-      store.pruneExpiredGuests();
       const token = /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.headers.authorization || '')?.[1];
+      if (req.headers.authorization !== undefined && !token) return sendJson(res, 401, { error: '身份凭证无效' });
       if(name==='api/locations/search'||name==='api/locations/reverse'){
         const q=new URL(req.url,'http://localhost').searchParams;
         store.authorizeLocation(token);
@@ -73,8 +73,16 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
       if (name === 'api/account' && req.method === 'GET') return sendJson(res, 200, store.account(token));
       if (name === 'api/account/logout' && req.method === 'POST') return sendJson(res, 200, store.logout(token));
       if (name === 'api/account/activities' && req.method === 'GET') return sendJson(res, 200, store.listAccountActivities(token));
-      if (name === 'api/activities' && req.method === 'POST') return sendJson(res, 201, store.create(await bodyJson(req), token));
-      if (name === 'api/activities/join' && req.method === 'POST') return sendJson(res, 201, store.join(await bodyJson(req), token));
+      if (name === 'api/activities' && req.method === 'POST') return sendJson(res, 201, store.create(await bodyJson(req), token, req.headers['x-guest-identity']));
+      if (name === 'api/activities/join' && req.method === 'POST') {
+        const guestToken = req.headers['x-guest-identity'];
+        if (!token && !guestToken) return sendJson(res, 401, { error: '请先初始化游客身份' });
+        const result = store.join(await bodyJson(req), token, guestToken);
+        return sendJson(res, result.alreadyJoined ? 200 : 201, result);
+      }
+      if (name === 'api/guest/presence' && req.method === 'POST') return sendJson(res, 200, store.visitGuestIdentity(token));
+      const heartbeat = /^api[/]activities[/]([0-9a-f-]{36})[/]guest-presence$/.exec(name);
+      if (heartbeat && req.method === 'POST') return sendJson(res, 200, store.guestActivityStatus(heartbeat[1], token));
       const claim = /^api\/activities\/([0-9a-f-]{36})\/claim$/.exec(name);
       if (claim && req.method === 'POST') return sendJson(res, 200, store.claim(claim[1], token, (await bodyJson(req)).guestToken));
       const photo = /^api\/activities\/([0-9a-f-]{36})\/photos(?:\/([0-9a-f-]{36}))?$/.exec(name);
@@ -137,16 +145,18 @@ function createServer(store = openStore(), mapProvider = require('./amap').creat
     res.end(req.method === 'HEAD' ? undefined : data);
   });
 });
-  let timer;
+  let timer, cleanupTimer;
   server.on('listening', () => {
     const settle = () => {
       try { store.settleExpiredRounds?.(); }
       catch (error) { console.error('轮次计票失败', error.message); }
     };
+    store.pruneExpiredGuests();
     settle();
+    cleanupTimer = setInterval(() => store.pruneExpiredGuests(), 60000).unref();
     timer = setInterval(settle, 1000).unref();
   });
-  server.on('close', () => clearInterval(timer));
+  server.on('close', () => { clearInterval(timer); clearInterval(cleanupTimer); });
   return server;
 }
 if (require.main === module) {
