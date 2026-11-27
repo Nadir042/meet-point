@@ -1,12 +1,13 @@
 'use strict';
 const { DatabaseSync } = require('node:sqlite');
-const { randomBytes, createHash, scryptSync, timingSafeEqual, randomUUID } = require('node:crypto');
+const { randomBytes, createHash, createHmac, scryptSync, timingSafeEqual, randomUUID, randomInt } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const M = require('./core');
 
 const digest = token => createHash('sha256').update(token).digest('hex');
 const fail = (status, message) => { const error = new Error(message); error.status = status; throw error; };
+const GUEST_IDENTITY_TTL = 7 * M.DAY;
 const codePattern = /^[A-Z0-9]{6}$/;
 const jpegFrames = new Set([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf]);
 
@@ -129,25 +130,82 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     );`);
   if (db.prepare('PRAGMA foreign_keys').get().foreign_keys !== 1)
     throw new Error('SQLite 外键约束未启用');
+  // Keep the expiry index in sync with membership writes, including legacy sessions.
+  const expiryForMember = `COALESCE((SELECT json_extract(m.value, '$.lastActiveAt')
+    FROM json_each(a.payload, '$.members') m WHERE json_extract(m.value, '$.id') = s.member_id),
+    json_extract(a.payload, '$.updatedAt'), 0) + ${M.DAY}`;
+  db.exec(`CREATE INDEX IF NOT EXISTS sessions_by_activity ON sessions(activity_id, member_id);
+    CREATE TABLE IF NOT EXISTS guest_expiry (
+      token_hash TEXT PRIMARY KEY REFERENCES sessions(token_hash) ON DELETE CASCADE,
+      expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS guest_expiry_due ON guest_expiry(expires_at);
+    CREATE TRIGGER IF NOT EXISTS index_new_guest AFTER INSERT ON sessions BEGIN
+      INSERT INTO guest_expiry SELECT s.token_hash, ${expiryForMember}
+      FROM sessions s JOIN activities a ON a.id = s.activity_id WHERE s.token_hash = NEW.token_hash;
+    END;
+    CREATE TRIGGER IF NOT EXISTS refresh_guest_expiry AFTER UPDATE OF payload ON activities BEGIN
+      INSERT OR REPLACE INTO guest_expiry SELECT s.token_hash, ${expiryForMember}
+      FROM sessions s JOIN activities a ON a.id = s.activity_id WHERE s.activity_id = NEW.id;
+    END;
+    INSERT INTO guest_expiry SELECT s.token_hash, ${expiryForMember}
+      FROM sessions s JOIN activities a ON a.id = s.activity_id
+      WHERE NOT EXISTS (SELECT 1 FROM guest_expiry e WHERE e.token_hash = s.token_hash);
+    CREATE TABLE IF NOT EXISTS guest_identities (
+      token_hash TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS guest_identity_due ON guest_identities(expires_at);
+    CREATE TABLE IF NOT EXISTS guest_memberships (
+      identity_hash TEXT NOT NULL REFERENCES guest_identities(token_hash) ON DELETE CASCADE,
+      activity_id TEXT NOT NULL,
+      session_hash TEXT NOT NULL UNIQUE REFERENCES sessions(token_hash) ON DELETE CASCADE,
+      PRIMARY KEY (identity_hash, activity_id)
+    );
+    CREATE TABLE IF NOT EXISTS activity_create_requests (
+      owner TEXT NOT NULL, request_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
+      activity_id TEXT NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
+      member_id TEXT NOT NULL,
+      PRIMARY KEY (owner, request_id)
+    );
+    CREATE TABLE IF NOT EXISTS guest_claims (
+      token_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL, activity_id TEXT NOT NULL, member_id TEXT NOT NULL,
+      FOREIGN KEY(account_id, activity_id) REFERENCES account_memberships(account_id, activity_id) ON DELETE CASCADE
+    );`);
   const findByCode = db.prepare('SELECT payload FROM activities WHERE code = ?');
   const findById = db.prepare('SELECT payload FROM activities WHERE id = ?');
   const insert = db.prepare('INSERT INTO activities (id, code, payload) VALUES (?, ?, ?)');
   const update = db.prepare('UPDATE activities SET payload = ? WHERE id = ?');
   const addSession = db.prepare('INSERT INTO sessions (token_hash, activity_id, member_id) VALUES (?, ?, ?)');
-  const findSession = db.prepare('SELECT member_id FROM sessions WHERE token_hash = ? AND activity_id = ?');
+  const findGuestIdentity = db.prepare('SELECT expires_at FROM guest_identities WHERE token_hash = ?');
+  const addGuestMembership = db.prepare('INSERT INTO guest_memberships VALUES (?, ?, ?)');
+  const findGuestMembership = db.prepare(`SELECT s.member_id FROM guest_memberships m
+    JOIN sessions s ON s.token_hash = m.session_hash WHERE m.identity_hash = ? AND m.activity_id = ?`);
+  const findSession = db.prepare('SELECT s.member_id, e.expires_at FROM sessions s JOIN guest_expiry e ON e.token_hash = s.token_hash WHERE s.token_hash = ? AND s.activity_id = ?');
   const addPhoto = db.prepare('INSERT INTO photos (id, activity_id, member_id, mime, data) VALUES (?, ?, ?, ?, ?)');
   const findPhoto = db.prepare('SELECT mime, data FROM photos WHERE id = ? AND activity_id = ?');
   const deletePhoto = db.prepare('DELETE FROM photos WHERE id = ? AND activity_id = ?');
+  const guestActivity = db.prepare('SELECT activity_id FROM sessions WHERE token_hash = ?');
   const findAccount = db.prepare('SELECT * FROM accounts WHERE username = ?');
   const findAccountSession = db.prepare('SELECT account_id, expires_at FROM account_sessions WHERE token_hash = ?');
   const findAccountMember = db.prepare('SELECT member_id FROM account_memberships WHERE account_id = ? AND activity_id = ?');
   const accountActivities = db.prepare('SELECT a.payload, m.member_id FROM account_memberships m JOIN activities a ON a.id = m.activity_id WHERE m.account_id = ?');
-  const guestSessions = db.prepare('SELECT s.token_hash, s.activity_id, s.member_id, a.payload FROM sessions s JOIN activities a ON a.id = s.activity_id');
+  const expiredGuestMember = db.prepare(`SELECT 1 FROM sessions s
+    JOIN guest_expiry e ON e.token_hash = s.token_hash
+    WHERE s.activity_id = ? AND s.member_id = ? AND e.expires_at <= ?`);
+  const guestSessions = db.prepare('SELECT s.token_hash, s.activity_id, s.member_id, a.payload FROM guest_expiry e JOIN sessions s ON s.token_hash = e.token_hash JOIN activities a ON a.id = s.activity_id WHERE e.expires_at <= ?');
   const withWrite = operation => {
     db.exec('BEGIN IMMEDIATE');
     try { const result = operation(); db.exec('COMMIT'); return result; }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   };
+  withWrite(() => {
+    if (db.prepare('PRAGMA user_version').get().user_version === 0) {
+      // Existing deadlines represent last visit + one day. Keep expired identities expired.
+      db.prepare('UPDATE guest_identities SET expires_at = expires_at + ? WHERE expires_at > ?')
+        .run(GUEST_IDENTITY_TTL - M.DAY, Date.now());
+      db.exec('PRAGMA user_version = 1');
+    }
+  });
   const accountFor = token => {
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '请先登录账号');
     const session = findAccountSession.get(digest(token));
@@ -177,12 +235,20 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       fail(400, '账号应为 3—30 位文字、数字或下划线，密码应为 8—128 位');
     return { username, password };
   };
+  const disabledMembers = db.prepare(`SELECT m.member_id FROM account_memberships m
+    JOIN disabled_accounts d ON d.account_id = m.account_id WHERE m.activity_id = ?`);
+  function effectiveMembers(activity, now = Date.now()) {
+    const disabled = new Set(disabledMembers.all(activity.id).map(row => row.member_id));
+    return activity.members.filter(m => !disabled.has(m.id) && M.access(activity, m.id, now).allowed);
+  }
   const project = (a, viewerId) => {
     const activity = M.migrate(a);
-    const voteStatus = M.voteStatus(activity, viewerId);
+    const eligible = effectiveMembers(activity);
+    const participants = { ...activity, members: eligible };
+    const voteStatus = M.voteStatus(activity, viewerId, eligible);
     const visibleRoutes = new Set(a.members.filter(m => m.shared || m.id === viewerId).map(m => m.id));
     return {
-      ...activity, viewerId, requirementsReady: M.ready(a), voteStatus,
+      ...activity, viewerId, ...(viewerId === a.hostId ? { successorIds: eligible.filter(m => m.id !== a.hostId).map(m => m.id) } : {}), requirementsReady: M.ready(participants), recommendationProgress: M.recommendationProgress(participants), voteStatus,
       votes: voteStatus.myVote ? { [viewerId]: voteStatus.myVote } : {},
       candidates: activity.candidates.map(p => ({ ...p, routes: (p.routes || []).filter(r => visibleRoutes.has(r.memberId)) })),
       members: M.visibleMembers(a, viewerId).map((m, i) => ({
@@ -202,12 +268,43 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     const before = JSON.parse(stored.payload);
     const activity = M.tick(before);
     if (activity.status !== before.status) update.run(JSON.stringify(activity), id);
-    if (!M.access(activity, memberId).allowed) {
-      if (row) db.prepare('DELETE FROM sessions WHERE token_hash = ? AND activity_id = ?').run(digest(token), id);
+    if (!M.access(activity, memberId).allowed || (row && row.expires_at <= Date.now())) {
       fail(403, '该身份的活动恢复期限已过');
+    }
+    const eligible = effectiveMembers(activity);
+    if (!['completed', 'cancelled'].includes(activity.status) && eligible.length &&
+        !eligible.some(member => member.id === activity.hostId)) {
+      activity.hostId = eligible[randomInt(eligible.length)].id;
+      update.run(JSON.stringify(activity), id);
     }
     return { activity, memberId };
   };
+
+  function validateGuestIdentity(token) {
+    if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) fail(401, '请先初始化游客身份');
+    const hash = digest(token);
+    const identity = findGuestIdentity.get(hash);
+    if (!identity || identity.expires_at <= Date.now()) fail(410, '游客身份已到期');
+    return hash;
+  }
+
+  // A retry can recover the same token without storing it in plaintext.
+  function guestMemberToken(guestToken, activityId, memberId) {
+    return createHmac('sha256', guestToken)
+      .update(`meetpoint:activity-membership:v1:${activityId}:${memberId}`).digest('base64url');
+  }
+
+  function issueMembership(accountId, activityId, memberId, guestToken, guestHash) {
+    if (accountId) {
+      db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, activityId, memberId);
+      return null;
+    }
+    const token = guestHash ? guestMemberToken(guestToken, activityId, memberId) : randomBytes(32).toString('base64url');
+    const hash = digest(token);
+    addSession.run(hash, activityId, memberId);
+    if (guestHash) addGuestMembership.run(guestHash, activityId, hash);
+    return token;
+  }
 
   const due = db.prepare(`SELECT payload FROM activities
     WHERE json_extract(payload, '$.status') = 'voting'
@@ -223,12 +320,68 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         }
       });
     },
-    pruneExpiredGuests() {
-      const remove = db.prepare('DELETE FROM sessions WHERE token_hash = ?');
-      for (const row of guestSessions.all()) {
-        const activity = M.tick(JSON.parse(row.payload));
-        if (!M.access(activity, row.member_id).allowed) remove.run(row.token_hash);
+    visitGuestIdentity(token) {
+      const now = Date.now(), expiresAt = now + GUEST_IDENTITY_TTL;
+      if (token !== undefined) {
+        const result = db.prepare('UPDATE guest_identities SET expires_at = ? WHERE token_hash = ? AND expires_at > ?')
+          .run(expiresAt, digest(token), now);
+        if (!result.changes) fail(410, '游客身份已到期');
+        return { expiresAt };
       }
+      const issued = randomBytes(32).toString('base64url');
+      db.prepare('INSERT INTO guest_identities VALUES (?, ?)').run(digest(issued), expiresAt);
+      return { token: issued, expiresAt };
+    },
+    guestActivityStatus(id, token) {
+      const { activity, memberId } = authenticate(id, token);
+      if (!findSession.get(digest(token), id)) fail(403, '请使用游客活动凭证');
+      return { lastActiveAt: activity.members.find(m => m.id === memberId).lastActiveAt };
+    },
+    pruneExpiredGuests(now = Date.now()) {
+      db.prepare('DELETE FROM guest_identities WHERE expires_at <= ?').run(now);
+      if (!db.prepare('SELECT 1 FROM guest_expiry WHERE expires_at <= ? LIMIT 1').get(now)) return;
+      return withWrite(() => {
+        const expired = new Map();
+        const lastExpiry = new Map();
+        for (const row of guestSessions.all(now)) {
+          const activity = expired.get(row.activity_id) || JSON.parse(row.payload);
+          const member = activity.members.find(m => m.id === row.member_id);
+          if (member && now < (member.lastActiveAt ?? activity.updatedAt) + M.DAY) continue;
+          db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(row.token_hash);
+          if (member) {
+            activity.formerMembers ||= {};
+            activity.formerMembers[member.id] = member.name;
+            activity.members = activity.members.filter(m => m.id !== member.id);
+            for (const candidate of activity.candidates) {
+              if (candidate.routes) candidate.routes = candidate.routes.filter(r => r.memberId !== member.id);
+            }
+            expired.set(activity.id, activity);
+            lastExpiry.set(activity.id, Math.max(lastExpiry.get(activity.id) || 0, (member.lastActiveAt ?? activity.updatedAt) + M.DAY));
+          }
+        }
+        for (const activity of expired.values()) {
+          if (!activity.members.length && Object.keys(activity.formerMembers).length === 1 && !activity.hadMultipleMembers) {
+            db.prepare('DELETE FROM photos WHERE activity_id = ?').run(activity.id);
+            db.prepare('DELETE FROM activities WHERE id = ?').run(activity.id);
+            continue;
+          }
+          if (!activity.members.some(m => m.id === activity.hostId)) {
+            const eligible = effectiveMembers(activity, now);
+            activity.hostId = eligible.length ? eligible[randomInt(eligible.length)].id : null;
+            if (!eligible.length && !['completed', 'cancelled'].includes(activity.status)) {
+              // A round that ended before the last guest expired already has a result.
+              if (activity.status === 'voting' && !activity.paused && activity.deadline <= lastExpiry.get(activity.id)) {
+                Object.assign(activity, M.tick(activity, lastExpiry.get(activity.id)));
+              }
+              if (activity.status !== 'completed') {
+                activity.status = 'cancelled';
+                activity.paused = false;
+              }
+            }
+          }
+          update.run(JSON.stringify(activity), activity.id);
+        }
+      });
     },
     register(input) {
       const { username, password } = accountInput(input);
@@ -322,6 +475,14 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
           db.prepare('INSERT OR IGNORE INTO disabled_accounts VALUES (?)').run(target.id);
           db.prepare('DELETE FROM account_sessions WHERE account_id = ?').run(target.id);
         } else {
+          if (isDisabled(target.id)) {
+            for (const row of accountActivities.all(target.id)) {
+              const activity = M.tick(JSON.parse(row.payload));
+              if (['completed', 'cancelled'].includes(activity.status)) continue;
+              if (M.access(activity, row.member_id).allowed && effectiveMembers(activity).length >= 10)
+                fail(409, `活动「${activity.title}」已有 10 位有效成员，腾出名额后才能恢复该账号`);
+            }
+          }
           db.prepare('DELETE FROM disabled_accounts WHERE account_id = ?').run(target.id);
         }
         return accountStatus(target);
@@ -342,7 +503,17 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
     claim(id, accountToken, guestToken) {
       const accountId = accountFor(accountToken);
       return withWrite(() => {
-        if (findAccountMember.get(accountId, id)) fail(409, '该账号已经参与此活动');
+        if (typeof guestToken !== 'string') fail(401, '游客凭证无效');
+        const hash = digest(guestToken);
+        const membership = findAccountMember.get(accountId, id);
+        if (membership) {
+          const receipt = db.prepare('SELECT 1 FROM guest_claims WHERE token_hash = ? AND account_id = ? AND activity_id = ? AND member_id = ?');
+          if (receipt.get(hash, accountId, id, membership.member_id)) {
+            const { activity, memberId } = authenticate(id, accountToken);
+            return { activity: project(activity, memberId) };
+          }
+          fail(409, '该账号已经参与此活动');
+        }
         const { activity, memberId } = authenticate(id, guestToken);
         if (!findSession.get(digest(guestToken), id)) fail(403, '请使用原游客身份归入账号');
         const member = activity.members.find(item => item.id === memberId);
@@ -350,36 +521,69 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         member.lastActiveAt = activity.updatedAt = Date.now();
         update.run(JSON.stringify(activity), id);
         db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, id, memberId);
-        db.prepare('DELETE FROM sessions WHERE token_hash = ? AND activity_id = ?').run(digest(guestToken), id);
+        db.prepare('INSERT INTO guest_claims VALUES (?, ?, ?, ?)').run(hash, accountId, id, memberId);
+        db.prepare('DELETE FROM sessions WHERE token_hash = ? AND activity_id = ?').run(hash, id);
         return { activity: project(activity, memberId) };
       });
     },
-    create(input, accountToken) {
-      const accountId = accountFor(accountToken);
+    create(input, accountToken, guestToken) {
+      const accountId = accountToken === undefined ? null : accountFor(accountToken);
       if (typeof input.title !== 'string' || typeof input.nickname !== 'string' ||
           input.title.length > 40 || input.nickname.length > 16) fail(400, '请填写有效的活动名称和昵称');
       return withWrite(() => {
-        const a = M.createActivity(input.title, input.nickname, input.type, Date.now(), { date: input.date, time: input.time, identityType: 'account' });
+        const guestHash = !accountId && guestToken !== undefined ? validateGuestIdentity(guestToken) : null;
+        const requestId = input.requestId;
+        if (requestId !== undefined &&
+            (typeof requestId !== 'string' || !/^[a-zA-Z0-9-]{12,64}$/.test(requestId)))
+          fail(400, '创建请求编号无效');
+        const owner = accountId ? `account:${accountId}` : guestHash ? `guest:${guestHash}` : null;
+        const payloadHash = digest(JSON.stringify([input.title, input.nickname, input.type, input.date, input.time]));
+        if (requestId && owner) {
+          const prior = db.prepare('SELECT * FROM activity_create_requests WHERE owner = ? AND request_id = ?').get(owner, requestId);
+          if (prior) {
+            if (prior.payload_hash !== payloadHash) fail(409, '本次创建请求已保存，请重新打开表单创建新活动');
+            const token = accountId ? accountToken : guestMemberToken(guestToken, prior.activity_id, prior.member_id);
+            const { activity, memberId } = authenticate(prior.activity_id, token);
+            return { activity: project(activity, memberId), token: accountId ? null : token };
+          }
+        }
+        const a = M.createActivity(input.title, input.nickname, input.type, Date.now(), { date: input.date, time: input.time, identityType: accountId ? 'account' : 'guest' });
         // Retrying a rare code collision must not overwrite another invitation.
         while (findByCode.get(a.code)) a.code = randomBytes(3).toString('hex').toUpperCase();
         insert.run(a.id, a.code, JSON.stringify(a));
-        db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, a.hostId);
-        return { activity: project(a, a.hostId), token: null };
+        const token = issueMembership(accountId, a.id, a.hostId, guestToken, guestHash);
+        if (owner && requestId) db.prepare('INSERT INTO activity_create_requests VALUES (?, ?, ?, ?, ?)').run(owner, requestId, payloadHash, a.id, a.hostId);
+        return { activity: project(a, a.hostId), token };
       });
     },
-    join(input, accountToken) {
-      const accountId = accountFor(accountToken);
+    join(input, accountToken, guestToken) {
+      const accountId = accountToken === undefined ? null : accountFor(accountToken);
       const code = typeof input.code === 'string' ? input.code.trim().toUpperCase() : '';
       if (!codePattern.test(code) || typeof input.nickname !== 'string' || input.nickname.length > 16) fail(400, '请填写有效的邀请码和昵称');
       return withWrite(() => {
+        const guestHash = !accountId && guestToken !== undefined ? validateGuestIdentity(guestToken) : null;
         const stored = findByCode.get(code);
         if (!stored) fail(404, '邀请码不存在');
-        if (findAccountMember.get(accountId, JSON.parse(stored.payload).id)) fail(409, '该账号已经参与此活动');
-        const a = M.act(JSON.parse(stored.payload), null, 'join', { name: input.nickname, identityType: 'account' });
+        const activity = JSON.parse(stored.payload);
+        const now = Date.now();
+        // An invitation cannot turn a solo activity that is due for deletion into a shared one.
+        const [soleMember] = activity.members;
+        if (!activity.hadMultipleMembers && !Object.keys(activity.formerMembers || {}).length &&
+            activity.members.length === 1 && expiredGuestMember.get(activity.id, soleMember.id, now))
+          fail(410, '该活动已到期，邀请码已失效');
+        if (accountId && findAccountMember.get(accountId, activity.id)) fail(409, '该账号已经参与此活动');
+        const existing = guestHash && findGuestMembership.get(guestHash, activity.id);
+        if (existing) {
+          const token = guestMemberToken(guestToken, activity.id, existing.member_id);
+          const { activity: current, memberId } = authenticate(activity.id, token);
+          return { activity: project(current, memberId), token, alreadyJoined: true };
+        }
+        const a = M.act(activity, null, 'join', { name: input.nickname, identityType: accountId ? 'account' : 'guest' }, now, effectiveMembers(activity, now));
+        a.hadMultipleMembers = true;
         update.run(JSON.stringify(a), a.id);
         const memberId = a.members.at(-1).id;
-        db.prepare('INSERT INTO account_memberships VALUES (?, ?, ?)').run(accountId, a.id, memberId);
-        return { activity: project(a, memberId), token: null };
+        const token = issueMembership(accountId, a.id, memberId, guestToken, guestHash);
+        return { activity: project(a, memberId), token };
       });
     },
     get(id, token) {
@@ -395,7 +599,6 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     requirements(id, token, input) {
-      accountFor(token);
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
         const origin = input?.origin;
@@ -412,27 +615,32 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     async recommendLive(id, token, provider, input = { action: 'recommend' }) {
-      accountFor(token);
       const {activity,memberId}=authenticate(id,token);
       if(memberId!==activity.hostId) fail(403,'只有发起者可以推荐');
       if(activity.paused||['completed','cancelled'].includes(activity.status)) fail(409,'当前活动不能推荐');
-      if(!M.ready(activity)) fail(400,'请所有成员先填写完整需求');
-      M.act(activity, memberId, input.action, input.data || {});
-      const version=JSON.stringify(activity);
+      const participants = { ...activity, members: effectiveMembers(activity) };
+      if (!M.ready(participants)) fail(400, '需要至少两位有效成员，且均已填写需求');
+      M.act(participants, memberId, input.action, input.data || {});
+      // Presence renewals do not change the inputs or workflow of a recommendation.
+      const revision = value => JSON.stringify(value, (key, item) => key === 'lastActiveAt' ? undefined : item);
+      const version = revision(participants);
       const signal=AbortSignal.timeout(300000);
       const bounded={search:(...args)=>provider.search(args[0],args[1],undefined,signal),route:(...args)=>provider.route(...args,signal)};
-      const result=await require('./recommendation').recommend(activity,bounded);
+      const result=await require('./recommendation').recommend(participants,bounded);
       return withWrite(()=>{
         const current=authenticate(id,token);
-        if(JSON.stringify(current.activity)!==version) fail(409,'活动已更新，请重新推荐');
+        if(revision({ ...current.activity, members: effectiveMembers(current.activity) })!==version) fail(409,'活动已更新，请重新推荐');
         const a=M.act(current.activity,memberId,input.action,{...input.data,recommendation:result});
         update.run(JSON.stringify(a),id);
         return {activity:project(a,memberId)};
       });
     },
-    authorizeLocation(token) { accountFor(token); },
+    authorizeLocation(token) {
+      const guest = typeof token === 'string' && guestActivity.get(digest(token));
+      if (guest) authenticate(guest.activity_id, token);
+      else accountFor(token);
+    },
     act(id, token, input) {
-      accountFor(token);
       const allowed = new Set(['requirements', 'recommend', 'request', 'review-request', 'reject-request', 'schedule', 'vote', 'finish', 'revote', 'pause', 'resume', 'cancel', 'transfer', 'remove', 'leave', 'rename', 'feeling', 'comment', 'delete-comment', 'delete-photo']);
       if (!input || !allowed.has(input.action)) fail(400, '不支持该操作');
       const data = input.data ?? {};
@@ -443,8 +651,14 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
         fail(400, '请提交候选地点 ID');
       return withWrite(() => {
         const { activity, memberId } = authenticate(id, token);
+        if (input.action === 'rename' && activity.members.find(m => m.id === memberId)?.identityType !== 'account')
+          fail(403, '游客昵称在创建或加入活动时确定');
+        if (input.action === 'transfer' && memberId === activity.hostId && !effectiveMembers(activity).some(m => m.id === data.id && m.id !== memberId))
+          fail(409, '该成员当前不能接任，请重新选择');
         if(input.action==='recommend'||input.data?.recommendation) fail(400,'推荐数据只能由服务端生成');
-        const a = M.act(activity, memberId, input.action, data);
+        const now = Date.now();
+        const eligible = ['finish', 'revote'].includes(input.action) ? effectiveMembers(activity, now) : activity.members;
+        const a = M.act(activity, memberId, input.action, data, now, eligible);
         update.run(JSON.stringify(a), id);
         if (input.action === 'leave' || input.action === 'remove') {
           const departed = input.action === 'leave' ? memberId : input.data.id;
@@ -456,7 +670,7 @@ function openStore(filename = process.env.MEETPOINT_DB || path.join(__dirname, '
       });
     },
     uploadPhoto(id, token, input) {
-      accountFor(token);
+      authenticate(id, token);
       if (!input || typeof input.id !== 'string' || !/^[a-f0-9-]{36}$/.test(input.id) ||
           typeof input.name !== 'string' || input.name.length > 100 ||
           !['image/jpeg', 'image/png', 'image/webp'].includes(input.mime) ||

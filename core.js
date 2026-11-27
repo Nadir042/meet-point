@@ -139,7 +139,7 @@
   }
   function activityDetailView(a) {
     const requirementsReady = typeof a.requirementsReady === 'boolean' ? a.requirementsReady : ready(a);
-    return requirementsReady ? 'recommend' : 'members';
+    return a.status === 'voting' || requirementsReady ? 'recommend' : 'members';
   }
   function recommendationProgress(a) {
     const total = a.members.length;
@@ -259,20 +259,21 @@
     return a;
   }
   function tally(a) {
-    const validIds = new Set(a.members.map(m => m.id));
+    const validIds = new Set([...a.members.map(m => m.id), ...Object.keys(a.formerMembers || {})]);
     const counts = Object.fromEntries(a.candidates.map(p => [p.id, 0]));
     for (const [id, vote] of Object.entries(a.votes)) if (validIds.has(id) && Object.hasOwn(counts, vote)) counts[vote]++;
     return counts;
   }
-  function voteStatus(a, memberId) {
+  function voteStatus(a, memberId, eligible = a.members) {
     const voteCounts = tally(a);
     const votedMembers = Object.values(voteCounts).reduce((sum, count) => sum + count, 0);
+    const currentVoters = eligible.filter(m => Object.hasOwn(voteCounts, a.votes[m.id])).length;
     const myVote = a.votes[memberId];
     return {
       round: a.round, status: a.status, paused: a.paused, deadline: a.deadline,
-      remainingMs: a.remainingMs, totalMembers: a.members.length, votedMembers,
+      remainingMs: a.remainingMs, totalMembers: eligible.length, votedMembers, currentVoters,
       myVote: Object.hasOwn(voteCounts, myVote) ? myVote : null, voteCounts,
-      allVoted: a.members.length > 0 && votedMembers === a.members.length,
+      allVoted: eligible.length > 0 && currentVoters === eligible.length,
       winningCandidateId: a.winningCandidateId
     };
   }
@@ -322,7 +323,7 @@
     a.deadline = now + DAY;
     a.remainingMs = null;
   }
-  function act(activity, actorId, action, data = {}, now = Date.now()) {
+  function act(activity, actorId, action, data = {}, now = Date.now(), eligible = activity.members) {
     const a = tick(activity, now);
     const actor = a.members.find(m => m.id === actorId);
     if (action !== 'join') assert(actor, '当前身份不在活动中');
@@ -353,14 +354,14 @@
       host(); a.status = 'cancelled'; a.paused = false; a.deadline = null; a.remainingMs = null;
       archiveRound(a, 'cancelled', now);
     } else if (action === 'transfer') {
-      host(); assert(a.members.some(m => m.id === data.id && m.id !== actorId), '请选择其他有效成员');
+      host(); assert(a.members.some(m => m.id === data.id && m.id !== actorId && access(a, m.id, now).allowed), '请选择其他有效成员');
       a.hostId = data.id;
     } else {
       assert(!a.paused, '活动已暂停，请发起者恢复后继续', 'ACTIVITY_PAUSED');
       switch (action) {
         case 'join': {
           assert(a.status !== 'voting', '投票期间不能加入成员');
-          assert(a.members.length < 10, '活动最多支持 10 人', 'ACTIVITY_FULL', 400);
+          assert(eligible.length < 10, '活动最多支持 10 人', 'ACTIVITY_FULL', 400);
           assert(typeof data.name === 'string', '请输入昵称');
           a.members.push({ ...member(availableName(a, data.name)), identityType: data.identityType === 'account' ? 'account' : 'guest', lastActiveAt: now });
           break;
@@ -454,12 +455,12 @@
           break;
         case 'finish':
           host(); assert(a.status === 'voting', '当前没有正在进行的投票', 'VOTING_CLOSED');
-          assert(voteStatus(a, actorId).allVoted, '全员投票后才能提前结束', 'NOT_ALL_VOTED');
+          assert(voteStatus(a, actorId, eligible).allVoted, '全员投票后才能提前结束', 'NOT_ALL_VOTED');
           settle(a, now);
           break;
         case 'revote':
           host(); assert(a.status === 'no-votes', '仅零票截止后可以沿用候选重投', 'NOT_ZERO_VOTES');
-          assert(ready(a), '需要 2—10 名成员，且需求完整');
+          assert(ready({ ...a, members: eligible }), '需要 2—10 名成员，且需求完整');
           startRound(a, a.candidates, a.groups, now);
           break;
         default: throw new Error('暂不支持该操作');
